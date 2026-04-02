@@ -2279,6 +2279,15 @@ function App() {
                     站外
                   </button>
                 </div>
+                {searchMode === 'external' && (
+                  <button
+                    onClick={() => setIsSearchConfigModalOpen(true)}
+                    className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors"
+                    title="管理搜索源"
+                  >
+                    <Settings size={14} />
+                  </button>
+                )}
               </div>
 
               {/* 搜索框 */}
