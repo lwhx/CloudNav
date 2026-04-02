@@ -34,6 +34,7 @@ import BackupModal from './components/BackupModal';
 import CategoryAuthModal from './components/CategoryAuthModal';
 import ImportModal from './components/ImportModal';
 import SettingsModal from './components/SettingsModal';
+import SearchConfigModal from './components/SearchConfigModal';
 import ContextMenu from './components/ContextMenu';
 import QRCodeModal from './components/QRCodeModal';
 
@@ -2102,6 +2103,13 @@ function App() {
         categories={categories}
         onUpdateLinks={(newLinks) => updateData(newLinks, categories)}
         authToken={authToken}
+      />
+
+      <SearchConfigModal
+        isOpen={isSearchConfigModalOpen}
+        onClose={() => setIsSearchConfigModalOpen(false)}
+        sources={externalSearchSources}
+        onSave={(sources) => handleSaveSearchConfig(sources, searchMode)}
       />
 
       {/* Sidebar Mobile Overlay */}
