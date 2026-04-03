@@ -87,7 +87,6 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
   // 缓存自定义图标到KV空间
   const cacheCustomIcon = async (url: string, iconUrl: string) => {
     try {
-      // 提取域名
       let domain = url;
       if (domain.startsWith('http://') || domain.startsWith('https://')) {
         const urlObj = new URL(domain);
@@ -97,7 +96,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
       // 将自定义图标保存到KV缓存
       const authToken = localStorage.getItem('cloudnav_auth_token');
       if (authToken) {
-        await fetch('/api/storage', {
+        const response = await fetch('/api/storage', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -109,14 +108,20 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
             icon: iconUrl
           })
         });
-        console.log(`Custom icon cached for domain: ${domain}`);
+
+        if (response.ok) {
+          const data = await response.json();
+          return data.icon || iconUrl;
+        }
       }
     } catch (error) {
       console.log("Failed to cache custom icon", error);
     }
+
+    return iconUrl;
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!title || !url) return;
@@ -126,22 +131,23 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       finalUrl = 'https://' + url;
     }
+
+    let finalIcon = icon;
+    if (finalIcon) {
+      finalIcon = await cacheCustomIcon(finalUrl, finalIcon);
+      setIcon(finalIcon);
+    }
     
     // 保存链接数据
     onSave({
       id: initialData?.id || '',
       title,
       url: finalUrl,
-      icon,
+      icon: finalIcon,
       description,
       categoryId,
       pinned
     });
-    
-    // 如果有自定义图标URL，缓存到KV空间
-    if (icon && !icon.includes('faviconextractor.com')) {
-      cacheCustomIcon(finalUrl, icon);
-    }
     
     // 批量模式下不关闭窗口，只显示成功提示
     if (batchMode) {
@@ -206,7 +212,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
       
       // 先尝试从KV缓存获取图标
       try {
-        const response = await fetch(`/api/storage?getConfig=favicon&domain=${encodeURIComponent(domain)}`);
+        const response = await fetch(`/api/storage?getConfig=favicon&domain=${encodeURIComponent(domain)}&fetch=true`);
         if (response.ok) {
           const data = await response.json();
           if (data.cached && data.icon) {

@@ -1,7 +1,7 @@
 # CloudNav-Oorz（修改版）
 本项目基于
 https://github.com/sese972010/CloudNav-
-https://github.com/aabacada/CloudNav-abcd
+https://github.com/Aaowu/CloudNav-Oorz
 两个融合 并根据自身需求做了一些修改 
 # CloudNav (云航) - 智能私有导航站
 
@@ -38,6 +38,7 @@ https://github.com/aabacada/CloudNav-abcd
 
 ### ☁️ 数据同步与安全
 *   **Cloudflare KV 同步**: 利用边缘存储技术，公司、家里、手机三端数据秒级同步。
+*   **链接图标持久化**: 第一次添加链接时自动抓取并存进 Cloudflare KV，换设备打开也不用重新补图标。
 *   **WebDAV 双重备份**: 支持坚果云、Nextcloud 等 WebDAV 网盘备份，数据自主掌控。
 *   **隐私加密体系**:
     *   **全局锁**: 部署时设置访问密码，防止他人查看。

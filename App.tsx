@@ -40,7 +40,7 @@ import QRCodeModal from './components/QRCodeModal';
 
 // --- 配置项 ---
 // 项目核心仓库地址
-const GITHUB_REPO_URL = 'https://github.com/aabacada/CloudNav-abcd';
+const GITHUB_REPO_URL = 'https://github.com/Aaowu/CloudNav-Oorz';
 
 const LOCAL_STORAGE_KEY = 'cloudnav_data_cache';
 const AUTH_KEY = 'cloudnav_auth_token';
@@ -429,11 +429,11 @@ function App() {
   };
 
   // 加载链接图标缓存
-  const loadLinkIcons = async (linksToLoad: LinkItem[]) => {
+  const loadLinkIcons = async (linksToLoad: LinkItem[], categoriesToUse: Category[]) => {
     if (!authToken) return; // 只有在已登录状态下才加载图标缓存
     
     const updatedLinks = [...linksToLoad];
-    const domainsToFetch: string[] = [];
+    const domainsToFetch = new Set<string>();
     
     // 收集所有链接的域名（包括已有图标的链接）
     for (const link of updatedLinks) {
@@ -447,7 +447,9 @@ function App() {
           if (domain.startsWith('http://') || domain.startsWith('https://')) {
             const urlObj = new URL(domain);
             domain = urlObj.hostname;
-            domainsToFetch.push(domain);
+            if (!link.icon || !link.icon.startsWith('data:')) {
+              domainsToFetch.add(domain);
+            }
           }
         } catch (e) {
           console.error("Failed to parse URL for icon loading", e);
@@ -456,10 +458,10 @@ function App() {
     }
     
     // 批量获取图标
-    if (domainsToFetch.length > 0) {
-      const iconPromises = domainsToFetch.map(async (domain) => {
+    if (domainsToFetch.size > 0) {
+      const iconPromises = Array.from(domainsToFetch).map(async (domain) => {
         try {
-          const response = await fetch(`/api/storage?getConfig=favicon&domain=${encodeURIComponent(domain)}`);
+          const response = await fetch(`/api/storage?getConfig=favicon&domain=${encodeURIComponent(domain)}&fetch=true`);
           if (response.ok) {
             const data = await response.json();
             if (data.cached && data.icon) {
@@ -475,39 +477,44 @@ function App() {
       const iconResults = await Promise.all(iconPromises);
       
       // 更新链接的图标
+      let hasChanges = false;
+
       iconResults.forEach(result => {
         if (result) {
-          const linkToUpdate = updatedLinks.find(link => {
-            if (!link.url) return false;
+          updatedLinks.forEach(linkToUpdate => {
+            if (!linkToUpdate.url) return;
+
             try {
-              let domain = link.url;
-              if (!link.url.startsWith('http://') && !link.url.startsWith('https://')) {
-                domain = 'https://' + link.url;
+              let domain = linkToUpdate.url;
+              if (!linkToUpdate.url.startsWith('http://') && !linkToUpdate.url.startsWith('https://')) {
+                domain = 'https://' + linkToUpdate.url;
               }
-              
-              if (domain.startsWith('http://') || domain.startsWith('https://')) {
-                const urlObj = new URL(domain);
-                return urlObj.hostname === result.domain;
+
+              if (!domain.startsWith('http://') && !domain.startsWith('https://')) {
+                return;
+              }
+
+              const urlObj = new URL(domain);
+              if (urlObj.hostname !== result.domain) {
+                return;
+              }
+
+              if (linkToUpdate.icon !== result.icon) {
+                linkToUpdate.icon = result.icon;
+                hasChanges = true;
               }
             } catch (e) {
-              return false;
+              return;
             }
-            return false;
           });
-          
-          if (linkToUpdate) {
-            // 只有当链接没有图标，或者当前图标是faviconextractor.com生成的，或者缓存中的图标是自定义图标时才更新
-            if (!linkToUpdate.icon || 
-                linkToUpdate.icon.includes('faviconextractor.com') || 
-                !result.icon.includes('faviconextractor.com')) {
-              linkToUpdate.icon = result.icon;
-            }
-          }
         }
       });
       
-      // 更新状态
-      setLinks(updatedLinks);
+      if (hasChanges) {
+        setLinks(updatedLinks);
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({ links: updatedLinks, categories: categoriesToUse }));
+        syncToCloud(updatedLinks, categoriesToUse, authToken);
+      }
     }
   };
 
@@ -606,7 +613,7 @@ function App() {
                     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
                     
                     // 加载链接图标缓存
-                    loadLinkIcons(data.links);
+                    loadLinkIcons(data.links, data.categories || DEFAULT_CATEGORIES);
                     hasCloudData = true;
                 }
             } else if (res.status === 401) {

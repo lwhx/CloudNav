@@ -28,6 +28,59 @@ const getCorsHeaders = (request: Request) => {
   };
 };
 
+const normalizeDomain = (rawDomain: string | null) => {
+  if (!rawDomain) return '';
+
+  try {
+    const value = rawDomain.startsWith('http://') || rawDomain.startsWith('https://')
+      ? rawDomain
+      : `https://${rawDomain}`;
+    return new URL(value).hostname;
+  } catch {
+    return rawDomain.trim();
+  }
+};
+
+const toBase64 = (buffer: ArrayBuffer) => {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+};
+
+const fetchAndEncodeFavicon = async (domain: string) => {
+  const providers = [
+    `https://www.faviconextractor.com/favicon/${encodeURIComponent(domain)}?larger=true`,
+    `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`,
+  ];
+
+  for (const iconUrl of providers) {
+    try {
+      const response = await fetch(iconUrl, {
+        cf: { cacheTtl: 86400, cacheEverything: true },
+      });
+
+      if (!response.ok) continue;
+
+      const arrayBuffer = await response.arrayBuffer();
+      if (!arrayBuffer.byteLength) continue;
+
+      const contentType = response.headers.get('content-type') || 'image/png';
+      return `data:${contentType};base64,${toBase64(arrayBuffer)}`;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+};
+
 // 处理 OPTIONS 请求（解决跨域预检）
 export const onRequestOptions = async (context: { request: Request }) => {
   return new Response(null, {
@@ -88,7 +141,8 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
     
     // 如果是获取图标请求
     if (getConfig === 'favicon') {
-      const domain = url.searchParams.get('domain');
+      const domain = normalizeDomain(url.searchParams.get('domain'));
+      const shouldFetch = url.searchParams.get('fetch') === 'true';
       if (!domain) {
         return new Response(JSON.stringify({ error: 'Domain parameter is required' }), {
           status: 400,
@@ -98,10 +152,27 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
       
       // 从KV中获取缓存的图标
       const cachedIcon = await env.CLOUDNAV_KV.get(`favicon:${domain}`);
-      if (cachedIcon) {
+      if (cachedIcon && (!shouldFetch || cachedIcon.startsWith('data:'))) {
         return new Response(JSON.stringify({ icon: cachedIcon, cached: true }), {
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
         });
+      }
+
+      if (shouldFetch) {
+        const fetchedIcon = await fetchAndEncodeFavicon(domain);
+
+        if (fetchedIcon) {
+          await env.CLOUDNAV_KV.put(`favicon:${domain}`, fetchedIcon);
+          return new Response(JSON.stringify({ icon: fetchedIcon, cached: true }), {
+            headers: { 'Content-Type': 'application/json', ...corsHeaders },
+          });
+        }
+
+        if (cachedIcon) {
+          return new Response(JSON.stringify({ icon: cachedIcon, cached: true }), {
+            headers: { 'Content-Type': 'application/json', ...corsHeaders },
+          });
+        }
       }
       
       // 如果没有缓存，返回空结果
@@ -222,7 +293,8 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     
     // 保存图标也需要密码，避免任意写入缓存
     if (body.saveConfig === 'favicon') {
-      const { domain, icon } = body;
+      const domain = normalizeDomain(body.domain);
+      const { icon } = body;
       if (!domain || !icon) {
         return new Response(JSON.stringify({ error: 'Domain and icon are required' }), {
           status: 400,
@@ -237,9 +309,16 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
         });
       }
       
-      // 保存图标到KV，设置过期时间为30天
-      await env.CLOUDNAV_KV.put(`favicon:${domain}`, icon, { expirationTtl: 30 * 24 * 60 * 60 });
-      return new Response(JSON.stringify({ success: true }), {
+      const finalIcon = icon.startsWith('data:') ? icon : await fetchAndEncodeFavicon(domain);
+      if (!finalIcon) {
+        return new Response(JSON.stringify({ error: 'Failed to fetch favicon' }), {
+          status: 502,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+
+      await env.CLOUDNAV_KV.put(`favicon:${domain}`, finalIcon);
+      return new Response(JSON.stringify({ success: true, icon: finalIcon }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
