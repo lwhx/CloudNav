@@ -43,18 +43,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const [domain, setDomain] = useState('');
   const [browserType, setBrowserType] = useState<'chrome' | 'firefox'>('chrome');
   const [extensionDisplayMode, setExtensionDisplayMode] = useState<ExtensionDisplayMode>('sidepanel');
-  const [popupWidth, setPopupWidth] = useState(420);
-  const [popupHeight, setPopupHeight] = useState(720);
   const [isZipping, setIsZipping] = useState(false);
   const faviconUploadRef = useRef<HTMLInputElement>(null);
   
   const [copiedStates, setCopiedStates] = useState<{[key: string]: boolean}>({});
 
-  const saveExtensionPrefs = (nextMode: ExtensionDisplayMode, nextWidth: number, nextHeight: number) => {
+  const saveExtensionPrefs = (nextMode: ExtensionDisplayMode) => {
       localStorage.setItem(EXTENSION_PREFS_KEY, JSON.stringify({
-          mode: nextMode,
-          popupWidth: nextWidth,
-          popupHeight: nextHeight
+          mode: nextMode
       }));
   };
 
@@ -84,16 +80,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           try {
               const parsed = JSON.parse(storedPrefs);
               setExtensionDisplayMode(parsed.mode === 'popup' ? 'popup' : 'sidepanel');
-              setPopupWidth(Math.max(320, Math.min(900, Number(parsed.popupWidth) || 420)));
-              setPopupHeight(Math.max(480, Math.min(1200, Number(parsed.popupHeight) || 720)));
           } catch (e) {}
       }
     }
   }, [isOpen, config, siteSettings]);
 
   useEffect(() => {
-      saveExtensionPrefs(extensionDisplayMode, popupWidth, popupHeight);
-  }, [extensionDisplayMode, popupWidth, popupHeight]);
+      saveExtensionPrefs(extensionDisplayMode);
+  }, [extensionDisplayMode]);
 
   const handleChange = (key: keyof AIConfig, value: string) => {
     setLocalConfig(prev => ({ ...prev, [key]: value }));
@@ -219,22 +213,19 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const getManifestJson = () => {
     const navName = localSiteSettings.navTitle || "CloudNav";
-    const actionLabel = extensionDisplayMode === 'popup' ? '打开/关闭小窗口' : '打开/关闭侧边栏';
+    const actionLabel = extensionDisplayMode === 'popup' ? '打开扩展弹窗' : '打开/关闭侧边栏';
     const json: any = {
         manifest_version: 3,
         name: navName + " Pro",
         version: "7.6",
         minimum_chrome_version: "116",
-        description: `${navName} - ${extensionDisplayMode === 'popup' ? '小窗口' : '侧边栏'}收藏助手`,
+        description: `${navName} - ${extensionDisplayMode === 'popup' ? '弹窗' : '侧边栏'}收藏助手`,
         permissions: ["activeTab", "scripting", "sidePanel", "storage", "favicon", "contextMenus", "notifications", "tabs"],
         background: {
             service_worker: "background.js"
         },
         action: {
             default_title: `${actionLabel} (Ctrl+Shift+E)`
-        },
-        side_panel: {
-            default_path: "sidebar.html"
         },
         icons: {
             "128": "icon.png"
@@ -249,6 +240,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           }
         }
     };
+
+    if (extensionDisplayMode === 'popup') {
+        json.action.default_popup = "popup.html";
+    } else {
+        json.side_panel = {
+            default_path: "sidebar.html"
+        };
+    }
     
     if (browserType === 'firefox') {
         json.browser_specific_settings = {
@@ -267,14 +266,11 @@ const CONFIG = {
   apiBase: "${domain}",
   password: "${password}",
   siteName: "${(localSiteSettings.navTitle || 'CloudNav').replace(/"/g, '\\"')}",
-  displayMode: "${extensionDisplayMode}",
-  popupWidth: ${popupWidth},
-  popupHeight: ${popupHeight}
+  displayMode: "${extensionDisplayMode}"
 };
 
 let linkCache = [];
 let categoryCache = [];
-let popupWindowId = null;
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
@@ -284,12 +280,6 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.cloudnav_data) {
         refreshCache().then(buildMenus);
-    }
-});
-
-chrome.windows.onRemoved.addListener((windowId) => {
-    if (popupWindowId === windowId) {
-        popupWindowId = null;
     }
 });
 
@@ -320,7 +310,6 @@ chrome.runtime.onConnect.addListener((port) => {
 
 chrome.action.onClicked.addListener(async (tab) => {
     if (CONFIG.displayMode === 'popup') {
-        await togglePopupWindow();
         return;
     }
 
@@ -342,28 +331,6 @@ chrome.action.onClicked.addListener(async (tab) => {
         }
     }
 });
-
-async function togglePopupWindow() {
-    if (popupWindowId) {
-        try {
-            await chrome.windows.remove(popupWindowId);
-            popupWindowId = null;
-            return;
-        } catch (e) {
-            popupWindowId = null;
-        }
-    }
-
-    const createdWindow = await chrome.windows.create({
-        url: chrome.runtime.getURL('popup.html'),
-        type: 'popup',
-        focused: true,
-        width: CONFIG.popupWidth,
-        height: CONFIG.popupHeight
-    });
-
-    popupWindowId = createdWindow?.id ?? null;
-}
 
 function buildMenus() {
     chrome.contextMenus.removeAll(() => {
@@ -441,6 +408,27 @@ async function saveLink(title, url, categoryId, icon = '') {
     }
 
     try {
+        const domain = new URL(url).hostname;
+        const iconRes = await fetch(\`\${CONFIG.apiBase}/api/storage\`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-auth-password': CONFIG.password
+            },
+            body: JSON.stringify({
+                saveConfig: 'favicon',
+                domain,
+                icon
+            })
+        });
+
+        if (iconRes.ok) {
+            const iconData = await iconRes.json();
+            icon = iconData.icon || icon;
+        }
+    } catch (e) {}
+
+    try {
         const res = await fetch(\`\${CONFIG.apiBase}/api/link\`, {
             method: 'POST',
             headers: { 
@@ -505,22 +493,22 @@ function notify(title, message) {
         }
         html, body { width: 100%; min-width: 0; max-width: 100%; overflow-x: hidden; }
         * { box-sizing: border-box; min-width: 0; }
-        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); padding-bottom: 14px; font-size: 12px; }
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); padding-bottom: 20px; }
         
-        .header { position: sticky; top: 0; padding: 8px 9px; background: var(--bg); border-bottom: 1px solid var(--border); z-index: 10; display: flex; gap: 6px; min-width: 0; }
-        .search-input { flex: 1; min-width: 0; width: 0; padding: 6px 9px; border-radius: 6px; border: 1px solid var(--border); background: var(--hover); color: var(--text); outline: none; font-size: 12px; }
+        .header { position: sticky; top: 0; padding: 10px 12px; background: var(--bg); border-bottom: 1px solid var(--border); z-index: 10; display: flex; gap: 8px; min-width: 0; }
+        .search-input { flex: 1; min-width: 0; width: 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--hover); color: var(--text); outline: none; font-size: 13px; }
         .search-input:focus { border-color: var(--accent); }
         
-        .refresh-btn { width: 28px; display: flex; items-center; justify-content: center; border: 1px solid var(--border); background: var(--hover); border-radius: 6px; color: var(--muted); cursor: pointer; transition: all 0.2s; }
+        .refresh-btn { width: 30px; display: flex; items-center; justify-content: center; border: 1px solid var(--border); background: var(--hover); border-radius: 6px; color: var(--muted); cursor: pointer; transition: all 0.2s; }
         .refresh-btn:hover { color: var(--accent); border-color: var(--accent); }
         .refresh-btn:active { transform: scale(0.95); }
         .rotating { animation: spin 1s linear infinite; }
         @keyframes spin { 100% { transform: rotate(360deg); } }
 
-        .content { padding: 3px; min-width: 0; }
+        .content { padding: 4px; min-width: 0; }
         .cat-group { margin-bottom: 2px; }
         .cat-header { 
-            padding: 7px 8px; font-size: 12px; font-weight: 600; color: var(--text); 
+            padding: 8px 10px; font-size: 13px; font-weight: 600; color: var(--text); 
             cursor: pointer; display: flex; items-center; gap: 8px; border-radius: 6px;
             user-select: none; transition: background 0.1s;
         }
@@ -529,15 +517,15 @@ function notify(title, message) {
         .cat-arrow { width: 14px; height: 14px; color: var(--muted); transition: transform 0.2s; }
         .cat-header.active .cat-arrow { transform: rotate(90deg); color: var(--accent); }
         
-        .cat-links { display: none; padding-left: 6px; margin-bottom: 6px; }
+        .cat-links { display: none; padding-left: 8px; margin-bottom: 8px; }
         .cat-header.active + .cat-links { display: block; }
         
-        .link-item { display: flex; items-center; gap: 7px; padding: 5px 7px; border-radius: 6px; text-decoration: none; color: var(--text); transition: background 0.1s; border-left: 2px solid transparent; }
+        .link-item { display: flex; items-center; gap: 8px; padding: 6px 8px; border-radius: 6px; text-decoration: none; color: var(--text); transition: background 0.1s; border-left: 2px solid transparent; }
         .link-item:hover { background: var(--hover); border-left-color: var(--accent); }
-        .link-icon { width: 15px; height: 15px; flex-shrink: 0; display: flex; items-center; justify-content: center; overflow: hidden; }
+        .link-icon { width: 16px; height: 16px; flex-shrink: 0; display: flex; items-center; justify-content: center; overflow: hidden; }
         .link-icon img { width: 100%; height: 100%; object-fit: contain; }
         .link-info { min-width: 0; flex: 1; }
-        .link-title { font-size: 12px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
+        .link-title { font-size: 13px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
         
         .empty { text-align: center; padding: 20px; color: var(--muted); font-size: 12px; }
         .loading { display: flex; justify-content: center; padding: 40px; color: var(--accent); font-size: 12px; }
@@ -760,12 +748,12 @@ const extPopupHtml = `<!DOCTYPE html>
             }
         }
         * { box-sizing: border-box; }
-        html, body { margin: 0; min-width: 360px; background:
+        html, body { margin: 0; width: 388px; min-width: 388px; max-width: 388px; background:
           radial-gradient(circle at top, rgba(59,130,246,0.16), transparent 34%),
           linear-gradient(180deg, rgba(255,255,255,0.4), transparent 40%),
           var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         body { padding: 14px; }
-        .shell { display: flex; flex-direction: column; gap: 12px; min-height: calc(100vh - 28px); }
+        .shell { display: flex; flex-direction: column; gap: 12px; max-height: 580px; }
         .hero { padding: 14px; border-radius: 18px; background: var(--card); backdrop-filter: blur(16px); border: 1px solid var(--line); box-shadow: 0 18px 60px rgba(15,23,42,0.10); }
         .hero-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
         .hero h1 { margin: 0; font-size: 16px; line-height: 1.2; }
@@ -796,8 +784,8 @@ const extPopupHtml = `<!DOCTYPE html>
         <section class="hero">
             <div class="hero-top">
                 <div>
-                    <h1>${localSiteSettings.navTitle || 'CloudNav'} 小窗口</h1>
-                    <p>更窄，更灵活，拖哪都行</p>
+                    <h1>${localSiteSettings.navTitle || 'CloudNav'} 扩展弹窗</h1>
+                    <p>像油猴那样，点一下就展开</p>
                 </div>
                 <button id="refresh" class="refresh-btn" title="同步最新数据">
                     <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
@@ -1339,40 +1327,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     onClick={() => setExtensionDisplayMode('popup')}
                                     className={`p-4 rounded-2xl border text-left transition-all ${extensionDisplayMode === 'popup' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 shadow-lg shadow-blue-500/10' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-blue-300'}`}
                                 >
-                                    <div className="font-semibold text-slate-800 dark:text-slate-100">独立小窗口</div>
-                                    <div className="text-xs text-slate-500 mt-1">点击扩展弹出一个更窄的小窗，可拖动，可关掉，也更适合多开屏幕。</div>
+                                    <div className="font-semibold text-slate-800 dark:text-slate-100">扩展栏弹窗</div>
+                                    <div className="text-xs text-slate-500 mt-1">点浏览器右上角扩展图标就弹出，和油猴那类插件一个感觉。</div>
                                 </button>
                             </div>
 
-                            {extensionDisplayMode === 'popup' && (
-                                <div className="grid md:grid-cols-2 gap-4">
-                                    <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-900/40 p-4">
-                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">小窗宽度</label>
-                                        <input
-                                            type="number"
-                                            min="320"
-                                            max="900"
-                                            value={popupWidth}
-                                            onChange={(e) => setPopupWidth(Math.max(320, Math.min(900, parseInt(e.target.value) || 420)))}
-                                            className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white outline-none focus:ring-2 focus:ring-blue-500"
-                                        />
-                                    </div>
-                                    <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-900/40 p-4">
-                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">小窗高度</label>
-                                        <input
-                                            type="number"
-                                            min="480"
-                                            max="1200"
-                                            value={popupHeight}
-                                            onChange={(e) => setPopupHeight(Math.max(480, Math.min(1200, parseInt(e.target.value) || 720)))}
-                                            className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white outline-none focus:ring-2 focus:ring-blue-500"
-                                        />
-                                    </div>
-                                </div>
-                            )}
-
                             <div className="rounded-2xl border border-amber-200/70 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100 p-4 text-sm">
-                                侧边栏的最小宽度是浏览器限制，扩展代码压不下去。我已经把内容做成尽量紧凑了。想要更窄，直接选上面的小窗口。右侧显示这件事也不是扩展能强制的，要在浏览器自己的侧边栏设置里切。
+                                侧边栏的最小宽度是浏览器限制，扩展代码压不下去。想要更窄，直接切到上面的扩展栏弹窗。右侧显示这件事也不是扩展能强制的，要在浏览器自己的侧边栏设置里切。
                             </div>
                         </div>
 
@@ -1384,7 +1345,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             
                             <div className="bg-slate-50 dark:bg-slate-800/50 p-5 rounded-xl border border-slate-200 dark:border-slate-700">
                                 <h5 className="font-semibold text-sm mb-3 dark:text-slate-200">
-                                    安装指南 ({browserType === 'chrome' ? 'Chrome/Edge' : 'Firefox'} / {extensionDisplayMode === 'popup' ? '小窗口模式' : '侧边栏模式'}):
+                                    安装指南 ({browserType === 'chrome' ? 'Chrome/Edge' : 'Firefox'} / {extensionDisplayMode === 'popup' ? '扩展弹窗模式' : '侧边栏模式'}):
                                 </h5>
                                 <ol className="list-decimal list-inside text-sm text-slate-600 dark:text-slate-400 space-y-2 leading-relaxed">
                                     <li>在电脑上新建文件夹 <code className="bg-white dark:bg-slate-900 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 font-mono text-xs">CloudNav-Pro</code>。</li>
@@ -1407,7 +1368,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     <li>1. 开启右上角的 "开发者模式" (Chrome)。</li>
                                     <li>2. 点击 "加载已解压的扩展程序"，选择包含上述文件的文件夹。</li>
                                     <li>3. 前往 <code className="select-all bg-white dark:bg-slate-900 px-1 rounded">chrome://extensions/shortcuts</code>。</li>
-                                    <li>4. <strong>[重要]</strong> 找到 "打开/关闭 CloudNav{extensionDisplayMode === 'popup' ? ' 小窗口' : ' 侧边栏'}"，设置快捷键 (如 Ctrl+Shift+E)。</li>
+                                    <li>4. <strong>[重要]</strong> 找到 "打开 CloudNav{extensionDisplayMode === 'popup' ? ' 扩展弹窗' : ' 侧边栏'}"，设置快捷键 (如 Ctrl+Shift+E)。</li>
                                 </ol>
                                 
                                 <div className="mt-4 mb-4">
@@ -1422,9 +1383,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 </div>
                                 
                                 <div className="p-3 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200 rounded border border-green-200 dark:border-green-900/50 text-sm space-y-2">
-                                    <div className="font-bold flex items-center gap-2"><Zap size={16}/> 当前方案 ({extensionDisplayMode === 'popup' ? '小窗口' : '侧边栏'}):</div>
+                                    <div className="font-bold flex items-center gap-2"><Zap size={16}/> 当前方案 ({extensionDisplayMode === 'popup' ? '扩展弹窗' : '侧边栏'}):</div>
                                     <ul className="list-disc list-inside text-xs space-y-1">
-                                        <li><strong>左键 / 快捷键:</strong> {extensionDisplayMode === 'popup' ? '打开或关闭小窗口。' : '极速打开/关闭侧边栏。'}</li>
+                                        <li><strong>左键 / 快捷键:</strong> {extensionDisplayMode === 'popup' ? '从扩展栏直接弹出面板。' : '极速打开/关闭侧边栏。'}</li>
                                         <li><strong>网页右键:</strong> 直接展示分类列表 (支持判重警告)。</li>
                                         <li><strong>图标右键:</strong> 同上，统一为级联菜单，直接保存。</li>
                                     </ul>
@@ -1457,7 +1418,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 {renderCodeBlock('background.js', extBackgroundJs)}
                                 
                                 <div className="flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200 pt-2 border-t border-slate-100 dark:border-slate-700">
-                                    <Keyboard size={18} className="text-green-500"/> {extensionDisplayMode === 'popup' ? '小窗口界面' : '侧边栏界面'}
+                                    <Keyboard size={18} className="text-green-500"/> {extensionDisplayMode === 'popup' ? '扩展弹窗界面' : '侧边栏界面'}
                                 </div>
                                 {extensionDisplayMode === 'popup' ? (
                                     <>

@@ -100,7 +100,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
         categoryId: targetCatId, 
         createdAt: Date.now(),
         pinned: false,
-        icon: undefined
+        icon: newLinkData.icon || undefined
     };
 
     // 5. Append
