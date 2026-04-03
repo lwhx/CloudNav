@@ -862,11 +862,6 @@ function App() {
 
     themeTransitionTimerRef.current = window.setTimeout(() => {
       applyThemeMode(newMode);
-      setThemeTransition(prev => ({
-        ...prev,
-        visible: false,
-        radius: 0,
-      }));
       themeTransitionTimerRef.current = null;
     }, 620);
   };
@@ -2135,11 +2130,9 @@ function App() {
     <div className="flex h-screen overflow-hidden text-slate-900 dark:text-slate-50">
       <div
         aria-hidden="true"
-        className="pointer-events-none fixed inset-0 z-[120] will-change-[clip-path,opacity,background] transition-[clip-path,opacity,background] duration-[620ms]"
+        className="pointer-events-none fixed inset-0 z-[120] will-change-[clip-path,opacity,background-color] transition-[clip-path,opacity,background-color] duration-[620ms]"
         style={{
-          background: themeTransition.targetDark
-            ? `radial-gradient(circle at ${themeTransition.x}px ${themeTransition.y}px, rgba(96,165,250,0.18) 0, rgba(15,23,42,0.96) 34%, #020617 68%)`
-            : `radial-gradient(circle at ${themeTransition.x}px ${themeTransition.y}px, rgba(255,255,255,0.96) 0, rgba(248,250,252,0.98) 34%, #f8fafc 68%)`,
+          backgroundColor: themeTransition.targetDark ? '#020617' : '#f8fafc',
           opacity: themeTransition.visible ? 1 : 0,
           clipPath: `circle(${themeTransition.radius}px at ${themeTransition.x}px ${themeTransition.y}px)`,
           transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)',
