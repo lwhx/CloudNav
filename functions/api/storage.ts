@@ -54,6 +54,24 @@ const toBase64 = (buffer: ArrayBuffer) => {
   return btoa(binary);
 };
 
+const fetchAndEncodeImage = async (imageUrl: string) => {
+  try {
+    const response = await fetch(imageUrl, {
+      cf: { cacheTtl: 86400, cacheEverything: true },
+    });
+
+    if (!response.ok) return null;
+
+    const arrayBuffer = await response.arrayBuffer();
+    if (!arrayBuffer.byteLength) return null;
+
+    const contentType = response.headers.get('content-type') || 'image/png';
+    return `data:${contentType};base64,${toBase64(arrayBuffer)}`;
+  } catch {
+    return null;
+  }
+};
+
 const fetchAndEncodeFavicon = async (domain: string) => {
   const providers = [
     `https://www.faviconextractor.com/favicon/${encodeURIComponent(domain)}?larger=true`,
@@ -61,21 +79,8 @@ const fetchAndEncodeFavicon = async (domain: string) => {
   ];
 
   for (const iconUrl of providers) {
-    try {
-      const response = await fetch(iconUrl, {
-        cf: { cacheTtl: 86400, cacheEverything: true },
-      });
-
-      if (!response.ok) continue;
-
-      const arrayBuffer = await response.arrayBuffer();
-      if (!arrayBuffer.byteLength) continue;
-
-      const contentType = response.headers.get('content-type') || 'image/png';
-      return `data:${contentType};base64,${toBase64(arrayBuffer)}`;
-    } catch {
-      continue;
-    }
+    const encoded = await fetchAndEncodeImage(iconUrl);
+    if (encoded) return encoded;
   }
 
   return null;
@@ -309,7 +314,14 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
         });
       }
       
-      const finalIcon = icon.startsWith('data:') ? icon : await fetchAndEncodeFavicon(domain);
+      let finalIcon = icon;
+      if (!finalIcon.startsWith('data:')) {
+        const isCustomImageUrl = /^https?:\/\//i.test(finalIcon);
+        finalIcon = isCustomImageUrl
+          ? await fetchAndEncodeImage(finalIcon)
+          : await fetchAndEncodeFavicon(domain);
+      }
+
       if (!finalIcon) {
         return new Response(JSON.stringify({ error: 'Failed to fetch favicon' }), {
           status: 502,
