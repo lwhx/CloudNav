@@ -1,7 +1,7 @@
 # CloudNav-Oorz（修改版）
 本项目基于
 https://github.com/sese972010/CloudNav-
-https://github.com/Aaowu/CloudNav-Oorz
+https://github.com/aabacada/CloudNav-abcd
 两个融合 并根据自身需求做了一些修改 
 # CloudNav (云航) - 智能私有导航站
 
