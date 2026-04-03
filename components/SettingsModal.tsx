@@ -16,9 +16,6 @@ interface SettingsModalProps {
   authToken: string | null;
 }
 
-type ExtensionDisplayMode = 'sidepanel' | 'popup';
-
-const EXTENSION_PREFS_KEY = 'cloudnav_extension_prefs';
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ 
     isOpen, onClose, config, siteSettings, onSave, links, categories, onUpdateLinks, authToken 
@@ -42,17 +39,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const [password, setPassword] = useState('');
   const [domain, setDomain] = useState('');
   const [browserType, setBrowserType] = useState<'chrome' | 'firefox'>('chrome');
-  const [extensionDisplayMode, setExtensionDisplayMode] = useState<ExtensionDisplayMode>('sidepanel');
   const [isZipping, setIsZipping] = useState(false);
   const faviconUploadRef = useRef<HTMLInputElement>(null);
   
   const [copiedStates, setCopiedStates] = useState<{[key: string]: boolean}>({});
-
-  const saveExtensionPrefs = (nextMode: ExtensionDisplayMode) => {
-      localStorage.setItem(EXTENSION_PREFS_KEY, JSON.stringify({
-          mode: nextMode
-      }));
-  };
 
   useEffect(() => {
     if (isOpen) {
@@ -74,20 +64,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       setDomain(window.location.origin);
       const storedToken = localStorage.getItem('cloudnav_auth_token');
       if (storedToken) setPassword(storedToken);
-
-      const storedPrefs = localStorage.getItem(EXTENSION_PREFS_KEY);
-      if (storedPrefs) {
-          try {
-              const parsed = JSON.parse(storedPrefs);
-              setExtensionDisplayMode(parsed.mode === 'popup' ? 'popup' : 'sidepanel');
-          } catch (e) {}
-      }
     }
   }, [isOpen, config, siteSettings]);
-
-  useEffect(() => {
-      saveExtensionPrefs(extensionDisplayMode);
-  }, [extensionDisplayMode]);
 
   const handleChange = (key: keyof AIConfig, value: string) => {
     setLocalConfig(prev => ({ ...prev, [key]: value }));
@@ -213,19 +191,21 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const getManifestJson = () => {
     const navName = localSiteSettings.navTitle || "CloudNav";
-    const actionLabel = extensionDisplayMode === 'popup' ? '打开扩展弹窗' : '打开/关闭侧边栏';
     const json: any = {
         manifest_version: 3,
         name: navName + " Pro",
         version: "7.6",
         minimum_chrome_version: "116",
-        description: `${navName} - ${extensionDisplayMode === 'popup' ? '弹窗' : '侧边栏'}收藏助手`,
+        description: `${navName} - 侧边栏 + 弹窗双模式收藏助手`,
         permissions: ["activeTab", "scripting", "sidePanel", "storage", "favicon", "contextMenus", "notifications", "tabs"],
         background: {
             service_worker: "background.js"
         },
         action: {
-            default_title: `${actionLabel} (Ctrl+Shift+E)`
+            default_title: `打开 ${navName} 弹窗`
+        },
+        side_panel: {
+            default_path: "sidebar.html"
         },
         icons: {
             "128": "icon.png"
@@ -236,18 +216,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               "default": "Ctrl+Shift+E",
               "mac": "Command+Shift+E"
             },
-            "description": `${actionLabel} ${navName}`
+            "description": `打开 ${navName} 弹窗`
+          },
+          "open_sidepanel": {
+            "suggested_key": {
+              "default": "Alt+Shift+E",
+              "mac": "Option+Shift+E"
+            },
+            "description": `打开 ${navName} 侧边栏`
           }
         }
     };
-
-    if (extensionDisplayMode === 'popup') {
-        json.action.default_popup = "popup.html";
-    } else {
-        json.side_panel = {
-            default_path: "sidebar.html"
-        };
-    }
+    json.action.default_popup = "popup.html";
     
     if (browserType === 'firefox') {
         json.browser_specific_settings = {
@@ -265,8 +245,7 @@ const extBackgroundJs = `// background.js - ${localSiteSettings.navTitle || 'Clo
 const CONFIG = {
   apiBase: "${domain}",
   password: "${password}",
-  siteName: "${(localSiteSettings.navTitle || 'CloudNav').replace(/"/g, '\\"')}",
-  displayMode: "${extensionDisplayMode}"
+  siteName: "${(localSiteSettings.navTitle || 'CloudNav').replace(/"/g, '\\"')}"
 };
 
 let linkCache = [];
@@ -281,6 +260,22 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.cloudnav_data) {
         refreshCache().then(buildMenus);
     }
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type === 'open-sidepanel') {
+        const targetWindowId = message.windowId || sender.tab?.windowId;
+        if (targetWindowId) {
+            chrome.sidePanel.open({ windowId: targetWindowId }).then(() => {
+                sendResponse({ ok: true });
+            }).catch((error) => {
+                console.error('Failed to open side panel', error);
+                sendResponse({ ok: false });
+            });
+            return true;
+        }
+    }
+    return false;
 });
 
 async function refreshCache() {
@@ -309,10 +304,6 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.action.onClicked.addListener(async (tab) => {
-    if (CONFIG.displayMode === 'popup') {
-        return;
-    }
-
     const windowId = tab.windowId;
     const existingPort = windowPorts[windowId];
 
@@ -329,6 +320,18 @@ chrome.action.onClicked.addListener(async (tab) => {
         } catch (e) {
             console.error('Failed to open sidebar', e);
         }
+    }
+});
+
+chrome.commands.onCommand.addListener(async (command) => {
+    if (command !== 'open_sidepanel') return;
+
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.windowId) return;
+        await chrome.sidePanel.open({ windowId: tab.windowId });
+    } catch (e) {
+        console.error('Failed to open side panel by command', e);
     }
 });
 
@@ -764,7 +767,7 @@ const extPopupHtml = `<!DOCTYPE html>
         @keyframes spin { 100% { transform: rotate(360deg); } }
         .search { margin-top: 12px; width: 100%; border: 1px solid var(--line); background: rgba(255,255,255,0.58); color: var(--text); border-radius: 14px; padding: 11px 13px; outline: none; font-size: 13px; }
         @media (prefers-color-scheme: dark) { .search { background: rgba(15,23,42,0.8); } }
-        .chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+        .chips { display: none; }
         .chip { white-space: nowrap; border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 999px; padding: 7px 11px; font-size: 12px; cursor: pointer; }
         .chip.active { color: white; background: var(--accent); border-color: transparent; box-shadow: 0 10px 28px rgba(37,99,235,0.25); }
         .results { display: flex; flex-direction: column; gap: 10px; }
@@ -785,15 +788,19 @@ const extPopupHtml = `<!DOCTYPE html>
             <div class="hero-top">
                 <div>
                     <h1>${localSiteSettings.navTitle || 'CloudNav'} 扩展弹窗</h1>
-                    <p>像油猴那样，点一下就展开</p>
+                    <p>点这里能快速搜和存</p>
                 </div>
-                <button id="refresh" class="refresh-btn" title="同步最新数据">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
-                </button>
+                <div style="display:flex; gap:8px;">
+                    <button id="openSidepanel" class="refresh-btn" title="打开侧边栏">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>
+                    </button>
+                    <button id="refresh" class="refresh-btn" title="同步最新数据">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+                    </button>
+                </div>
             </div>
             <input id="search" class="search" type="text" placeholder="搜标题、网址、描述" autocomplete="off">
         </section>
-        <div id="chips" class="chips"></div>
         <div id="content" class="results">
             <div class="empty">初始化中...</div>
         </div>
@@ -810,13 +817,12 @@ const CACHE_KEY = 'cloudnav_data';
 
 document.addEventListener('DOMContentLoaded', async () => {
     const content = document.getElementById('content');
-    const chips = document.getElementById('chips');
     const searchInput = document.getElementById('search');
     const refreshBtn = document.getElementById('refresh');
+    const openSidepanelBtn = document.getElementById('openSidepanel');
 
     let allLinks = [];
     let allCategories = [];
-    let activeCategory = 'all';
 
     const escapeHtml = (value) => String(value ?? '')
         .replace(/&/g, '&amp;')
@@ -845,54 +851,57 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     };
 
-    const renderChips = () => {
-        const chipItems = [{ id: 'all', name: '全部' }, ...allCategories];
-        chips.innerHTML = chipItems.map((cat) => \`
-            <button class="chip \${activeCategory === cat.id ? 'active' : ''}" data-id="\${cat.id}">
-                \${escapeHtml(cat.name)}
-            </button>
-        \`).join('');
-    };
-
     const render = () => {
         const query = searchInput.value.trim().toLowerCase();
-        const filteredLinks = allLinks.filter((link) => {
-            if (activeCategory !== 'all' && link.categoryId !== activeCategory) return false;
-            if (!query) return true;
-            return link.title.toLowerCase().includes(query) ||
-                link.url.toLowerCase().includes(query) ||
-                (link.description && link.description.toLowerCase().includes(query));
-        });
+        const groupedLinks = allCategories.map((category) => {
+            const links = allLinks.filter((link) => {
+                if (link.categoryId !== category.id) return false;
+                if (!query) return true;
+                return link.title.toLowerCase().includes(query) ||
+                    link.url.toLowerCase().includes(query) ||
+                    (link.description && link.description.toLowerCase().includes(query));
+            });
 
-        if (filteredLinks.length === 0) {
+            return { category, links };
+        }).filter((group) => group.links.length > 0);
+
+        if (groupedLinks.length === 0) {
             content.innerHTML = '<div class="empty">这里还没有符合条件的链接</div>';
             return;
         }
 
-        content.innerHTML = filteredLinks.map((link) => {
-            const category = allCategories.find((cat) => cat.id === link.categoryId);
-            return \`
-                <a class="card" href="\${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">
-                    <div class="icon"><img src="\${escapeHtml(getFaviconUrl(link))}" alt=""></div>
-                    <div class="meta">
-                        <div class="title">\${escapeHtml(link.title)}</div>
-                        <div class="url">\${escapeHtml(getHostname(link.url))}</div>
-                        <div class="badge">\${escapeHtml(category?.name || '未分类')}</div>
-                    </div>
-                </a>
-            \`;
-        }).join('');
+        content.innerHTML = groupedLinks.map(({ category, links }) => \`
+            <section style="display:flex; flex-direction:column; gap:10px;">
+                <div style="display:flex; align-items:center; justify-content:space-between;">
+                    <button class="chip active" type="button">\${escapeHtml(category.name)}</button>
+                    <span style="font-size:11px; color:var(--muted);">\${links.length} 个</span>
+                </div>
+                <div class="results">
+                    \${links.map((link) => \`
+                        <a class="card" href="\${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">
+                            <div class="icon"><img src="\${escapeHtml(getFaviconUrl(link))}" alt=""></div>
+                            <div class="meta">
+                                <div class="title">\${escapeHtml(link.title)}</div>
+                                <div class="url">\${escapeHtml(getHostname(link.url))}</div>
+                                <div class="badge">\${escapeHtml(category.name)}</div>
+                            </div>
+                        </a>
+                    \`).join('')}
+                </div>
+            </section>
+        \`).join('');
     };
 
-    chips.addEventListener('click', (event) => {
-        const button = event.target.closest('.chip');
-        if (!button) return;
-        activeCategory = button.dataset.id || 'all';
-        renderChips();
-        render();
-    });
-
     searchInput.addEventListener('input', render);
+    openSidepanelBtn?.addEventListener('click', async () => {
+        try {
+            const currentWindow = await chrome.windows.getCurrent();
+            await chrome.runtime.sendMessage({ type: 'open-sidepanel', windowId: currentWindow.id });
+            window.close();
+        } catch (e) {
+            console.error('Open side panel failed', e);
+        }
+    });
 
     const loadData = async (forceRefresh = false) => {
         try {
@@ -901,7 +910,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (cached[CACHE_KEY]) {
                     allLinks = cached[CACHE_KEY].links || [];
                     allCategories = cached[CACHE_KEY].categories || [];
-                    renderChips();
                     render();
                     return;
                 }
@@ -917,7 +925,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             allLinks = data.links || [];
             allCategories = data.categories || [];
             await chrome.storage.local.set({ [CACHE_KEY]: data });
-            renderChips();
             render();
         } catch (e) {
             content.innerHTML = \`<div class="empty" style="color:#ef4444">加载失败<br>\${escapeHtml(e.message)}</div>\`;
@@ -1312,40 +1319,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <div className="space-y-4">
                             <h4 className="font-medium text-slate-800 dark:text-slate-200 flex items-center gap-2">
                                 <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-xs font-bold">3</span>
-                                显示方式
-                            </h4>
-
-                            <div className="grid md:grid-cols-2 gap-4">
-                                <button
-                                    onClick={() => setExtensionDisplayMode('sidepanel')}
-                                    className={`p-4 rounded-2xl border text-left transition-all ${extensionDisplayMode === 'sidepanel' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 shadow-lg shadow-blue-500/10' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-blue-300'}`}
-                                >
-                                    <div className="font-semibold text-slate-800 dark:text-slate-100">浏览器侧边栏</div>
-                                    <div className="text-xs text-slate-500 mt-1">保留现在这套交互，适合常驻。宽度能拖，但最小宽度是浏览器自己卡的。</div>
-                                </button>
-                                <button
-                                    onClick={() => setExtensionDisplayMode('popup')}
-                                    className={`p-4 rounded-2xl border text-left transition-all ${extensionDisplayMode === 'popup' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 shadow-lg shadow-blue-500/10' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-blue-300'}`}
-                                >
-                                    <div className="font-semibold text-slate-800 dark:text-slate-100">扩展栏弹窗</div>
-                                    <div className="text-xs text-slate-500 mt-1">点浏览器右上角扩展图标就弹出，和油猴那类插件一个感觉。</div>
-                                </button>
-                            </div>
-
-                            <div className="rounded-2xl border border-amber-200/70 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100 p-4 text-sm">
-                                侧边栏的最小宽度是浏览器限制，扩展代码压不下去。想要更窄，直接切到上面的扩展栏弹窗。右侧显示这件事也不是扩展能强制的，要在浏览器自己的侧边栏设置里切。
-                            </div>
-                        </div>
-
-                        <div className="space-y-4">
-                            <h4 className="font-medium text-slate-800 dark:text-slate-200 flex items-center gap-2">
-                                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-xs font-bold">4</span>
                                 配置步骤与代码
                             </h4>
                             
                             <div className="bg-slate-50 dark:bg-slate-800/50 p-5 rounded-xl border border-slate-200 dark:border-slate-700">
                                 <h5 className="font-semibold text-sm mb-3 dark:text-slate-200">
-                                    安装指南 ({browserType === 'chrome' ? 'Chrome/Edge' : 'Firefox'} / {extensionDisplayMode === 'popup' ? '扩展弹窗模式' : '侧边栏模式'}):
+                                    安装指南 ({browserType === 'chrome' ? 'Chrome/Edge' : 'Firefox'} / 双模式插件):
                                 </h5>
                                 <ol className="list-decimal list-inside text-sm text-slate-600 dark:text-slate-400 space-y-2 leading-relaxed">
                                     <li>在电脑上新建文件夹 <code className="bg-white dark:bg-slate-900 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 font-mono text-xs">CloudNav-Pro</code>。</li>
@@ -1368,7 +1347,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     <li>1. 开启右上角的 "开发者模式" (Chrome)。</li>
                                     <li>2. 点击 "加载已解压的扩展程序"，选择包含上述文件的文件夹。</li>
                                     <li>3. 前往 <code className="select-all bg-white dark:bg-slate-900 px-1 rounded">chrome://extensions/shortcuts</code>。</li>
-                                    <li>4. <strong>[重要]</strong> 找到 "打开 CloudNav{extensionDisplayMode === 'popup' ? ' 扩展弹窗' : ' 侧边栏'}"，设置快捷键 (如 Ctrl+Shift+E)。</li>
+                                    <li>4. 点浏览器右上角插件图标，默认先弹出小窗。</li>
+                                    <li>5. 在弹窗右上角点侧边栏按钮，就能切到侧边栏。</li>
+                                    <li>6. <strong>[重要]</strong> 找到 "打开 CloudNav 弹窗" 和 "打开 CloudNav 侧边栏" 两个快捷键，按你习惯自己设。</li>
                                 </ol>
                                 
                                 <div className="mt-4 mb-4">
@@ -1383,9 +1364,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 </div>
                                 
                                 <div className="p-3 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200 rounded border border-green-200 dark:border-green-900/50 text-sm space-y-2">
-                                    <div className="font-bold flex items-center gap-2"><Zap size={16}/> 当前方案 ({extensionDisplayMode === 'popup' ? '扩展弹窗' : '侧边栏'}):</div>
+                                    <div className="font-bold flex items-center gap-2"><Zap size={16}/> 当前方案 (双模式):</div>
                                     <ul className="list-disc list-inside text-xs space-y-1">
-                                        <li><strong>左键 / 快捷键:</strong> {extensionDisplayMode === 'popup' ? '从扩展栏直接弹出面板。' : '极速打开/关闭侧边栏。'}</li>
+                                        <li><strong>点扩展图标:</strong> 直接弹出小窗。</li>
+                                        <li><strong>弹窗右上角按钮:</strong> 一下切到侧边栏。</li>
                                         <li><strong>网页右键:</strong> 直接展示分类列表 (支持判重警告)。</li>
                                         <li><strong>图标右键:</strong> 同上，统一为级联菜单，直接保存。</li>
                                     </ul>
@@ -1418,19 +1400,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 {renderCodeBlock('background.js', extBackgroundJs)}
                                 
                                 <div className="flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200 pt-2 border-t border-slate-100 dark:border-slate-700">
-                                    <Keyboard size={18} className="text-green-500"/> {extensionDisplayMode === 'popup' ? '扩展弹窗界面' : '侧边栏界面'}
+                                    <Keyboard size={18} className="text-green-500"/> 扩展弹窗界面
                                 </div>
-                                {extensionDisplayMode === 'popup' ? (
-                                    <>
-                                        {renderCodeBlock('popup.html', extPopupHtml)}
-                                        {renderCodeBlock('popup.js', extPopupJs)}
-                                    </>
-                                ) : (
-                                    <>
-                                        {renderCodeBlock('sidebar.html', extSidebarHtml)}
-                                        {renderCodeBlock('sidebar.js', extSidebarJs)}
-                                    </>
-                                )}
+                                {renderCodeBlock('popup.html', extPopupHtml)}
+                                {renderCodeBlock('popup.js', extPopupJs)}
+
+                                <div className="flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200 pt-2 border-t border-slate-100 dark:border-slate-700">
+                                    <Sidebar size={18} className="text-purple-500"/> 侧边栏界面
+                                </div>
+                                {renderCodeBlock('sidebar.html', extSidebarHtml)}
+                                {renderCodeBlock('sidebar.js', extSidebarJs)}
                             </div>
                         </div>
                     </div>
