@@ -26,10 +26,12 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   const [editName, setEditName] = useState('');
   const [editPassword, setEditPassword] = useState('');
   const [editIcon, setEditIcon] = useState('');
+  const [editRequireAuth, setEditRequireAuth] = useState(false);
   
   const [newCatName, setNewCatName] = useState('');
   const [newCatPassword, setNewCatPassword] = useState('');
   const [newCatIcon, setNewCatIcon] = useState('Folder');
+  const [newCatRequireAuth, setNewCatRequireAuth] = useState(false);
   
   const [isIconSelectorOpen, setIsIconSelectorOpen] = useState(false);
   const [iconSelectorTarget, setIconSelectorTarget] = useState<'edit' | 'new' | null>(null);
@@ -138,6 +140,7 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     setEditName(cat.name);
     setEditPassword(cat.password || '');
     setEditIcon(cat.icon);
+    setEditRequireAuth(!!cat.requireAuth);
   };
 
   const saveEdit = () => {
@@ -146,7 +149,8 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
         ...c, 
         name: editName.trim(),
         icon: editIcon,
-        password: editPassword.trim() || undefined
+        password: editPassword.trim() || undefined,
+        requireAuth: editRequireAuth
     } : c);
     onUpdateCategories(newCats);
     setEditingId(null);
@@ -158,12 +162,14 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
       id: Date.now().toString(),
       name: newCatName.trim(),
       icon: newCatIcon,
-      password: newCatPassword.trim() || undefined
+      password: newCatPassword.trim() || undefined,
+      requireAuth: newCatRequireAuth
     };
     onUpdateCategories([...categories, newCat]);
     setNewCatName('');
     setNewCatPassword('');
     setNewCatIcon('Folder');
+    setNewCatRequireAuth(false);
   };
 
   const openIconSelector = (target: 'edit' | 'new') => {
@@ -188,6 +194,7 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     setNewCatName('');
     setNewCatPassword('');
     setNewCatIcon('Folder');
+    setNewCatRequireAuth(false);
   };
 
   return (
@@ -254,6 +261,15 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                             placeholder="密码（可选）"
                           />
                         </div>
+                        <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={editRequireAuth}
+                            onChange={(e) => setEditRequireAuth(e.target.checked)}
+                            className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700"
+                          />
+                          <span>需要先输入全站密码才能看这个分类</span>
+                        </label>
                       </div>
                     ) : (
                       <div className="flex items-center gap-2">
@@ -264,7 +280,7 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                             <span className="ml-2 text-xs text-slate-400">(默认分类，不可编辑)</span>
                           )}
                         </span>
-                        {cat.password && (
+                        {(cat.password || cat.requireAuth) && (
                           <Lock size={12} className="text-slate-400" />
                         )}
                       </div>
@@ -346,6 +362,15 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                    <Plus size={18} />
                  </button>
              </div>
+             <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+               <input
+                 type="checkbox"
+                 checked={newCatRequireAuth}
+                 onChange={(e) => setNewCatRequireAuth(e.target.checked)}
+                 className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700"
+               />
+               <span>需要先输入全站密码才能看这个分类</span>
+             </label>
            </div>
           
           {/* 图标选择器弹窗 */}

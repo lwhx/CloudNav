@@ -162,6 +162,7 @@ function App() {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isSearchConfigModalOpen, setIsSearchConfigModalOpen] = useState(false);
   const [catAuthModalData, setCatAuthModalData] = useState<Category | null>(null);
+  const [pendingProtectedCategoryId, setPendingProtectedCategoryId] = useState<string | null>(null);
   
   const [editingLink, setEditingLink] = useState<LinkItem | undefined>(undefined);
   // State for data pre-filled from Bookmarklet
@@ -947,7 +948,7 @@ function App() {
                         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
                         
                         // 加载链接图标缓存
-                        loadLinkIcons(data.links);
+                        loadLinkIcons(data.links, data.categories || DEFAULT_CATEGORIES);
                     } else {
                         // 如果服务器没有数据，使用本地数据
                         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({ links, categories }));
@@ -955,7 +956,7 @@ function App() {
                         syncToCloud(links, categories, password);
                         
                         // 加载链接图标缓存
-                        loadLinkIcons(links);
+                        loadLinkIcons(links, categories);
                     }
                 } 
             } catch (e) {
@@ -978,6 +979,11 @@ function App() {
             } catch (e) {
                 console.warn("Failed to fetch AI config after login.", e);
             }
+
+            if (pendingProtectedCategoryId) {
+                setSelectedCategory(pendingProtectedCategoryId);
+                setPendingProtectedCategoryId(null);
+            }
             
             return true;
         }
@@ -990,6 +996,7 @@ function App() {
   const handleLogout = () => {
       setAuthToken(null);
       localStorage.removeItem(AUTH_KEY);
+      setPendingProtectedCategoryId(null);
       setSyncStatus('offline');
       // 退出后重新加载本地数据
       loadFromLocal();
@@ -1380,6 +1387,13 @@ function App() {
   // --- Category Management & Security ---
 
   const handleCategoryClick = (cat: Category) => {
+      if (cat.requireAuth && !authToken) {
+          setPendingProtectedCategoryId(cat.id);
+          setIsAuthOpen(true);
+          setSidebarOpen(false);
+          return;
+      }
+
       // If category has password and is NOT unlocked
       if (cat.password && !unlockedCategoryIds.has(cat.id)) {
           setCatAuthModalData(cat);
@@ -1744,10 +1758,17 @@ function App() {
 
   // --- Filtering & Memo ---
 
-  // Helper to check if a category is "Locked" (Has password AND not unlocked)
+  const requiresGlobalCategoryAuth = (catId: string) => {
+      const cat = categories.find(c => c.id === catId);
+      return !!cat?.requireAuth && !authToken;
+  };
+
+  // Helper to check if a category is "Locked"
   const isCategoryLocked = (catId: string) => {
       const cat = categories.find(c => c.id === catId);
-      if (!cat || !cat.password) return false;
+      if (!cat) return false;
+      if (cat.requireAuth && !authToken) return true;
+      if (!cat.password) return false;
       return !unlockedCategoryIds.has(catId);
   };
 
@@ -2168,7 +2189,7 @@ function App() {
             </div>
 
             {categories.map(cat => {
-                const isLocked = cat.password && !unlockedCategoryIds.has(cat.id);
+                const isLocked = isCategoryLocked(cat.id);
                 return (
                   <button
                     key={cat.id}
@@ -2183,6 +2204,11 @@ function App() {
                       {isLocked ? <Lock size={16} className="text-amber-500" /> : <Icon name={cat.icon} size={16} />}
                     </div>
                     <span className="truncate flex-1 text-left">{cat.name}</span>
+                    {requiresGlobalCategoryAuth(cat.id) && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                        需登录
+                      </span>
+                    )}
                     {selectedCategory === cat.id && <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>}
                   </button>
                 );

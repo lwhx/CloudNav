@@ -15,6 +15,7 @@ export interface Category {
   name: string;
   icon: string; // Lucide icon name or emoji
   password?: string; // Optional password for category protection
+  requireAuth?: boolean; // 使用全站密码后才可查看该分类内容
 }
 
 export interface SiteSettings {
