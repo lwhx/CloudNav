@@ -332,6 +332,10 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     }
 
     if (body.saveConfig === 'webdav') {
+      const authCheck = await validateAuth(request, env, corsHeaders, { requireSession: true });
+      if (!authCheck.ok) {
+        return authCheck.response;
+      }
       await env.CLOUDNAV_KV.put('webdav_config', JSON.stringify(body.config));
       return new Response(JSON.stringify({ success: true }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
