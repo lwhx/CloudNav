@@ -37,6 +37,22 @@ const buildJsonResponse = (body: unknown, status: number, corsHeaders: Record<st
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
 
+const buildWebDavErrorMessage = (status: number) => {
+  if (status === 520) {
+    return 'Cloudflare 代理访问坚果云返回 520';
+  }
+  if (status === 401) {
+    return 'WebDAV 用户名或应用密码不正确';
+  }
+  if (status === 403) {
+    return 'WebDAV 服务器拒绝访问';
+  }
+  if (status === 404) {
+    return '备份文件不存在';
+  }
+  return `WebDAV 返回异常状态 ${status}`;
+};
+
 const validateAuth = async (request: Request, env: Env, corsHeaders: Record<string, string>) => {
   if (!env.PASSWORD) {
     return buildJsonResponse({ error: 'Server misconfigured: PASSWORD not set' }, 500, corsHeaders);
@@ -125,10 +141,11 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
 
     if (operation === 'download') {
         if (!response.ok) {
-             if (response.status === 404) {
-                 return buildJsonResponse({ error: 'Backup file not found' }, 404, corsHeaders);
-             }
-             return buildJsonResponse({ error: `WebDAV Error: ${response.status}` }, response.status, corsHeaders);
+             return buildJsonResponse({
+               success: false,
+               status: response.status,
+               error: buildWebDavErrorMessage(response.status),
+             }, 200, corsHeaders);
         }
         const data = await response.json();
         return buildJsonResponse(data, 200, corsHeaders);
@@ -136,7 +153,11 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
 
     const success = response.ok || response.status === 207;
     
-    return buildJsonResponse({ success, status: response.status }, 200, corsHeaders);
+    return buildJsonResponse({
+      success,
+      status: response.status,
+      ...(success ? {} : { error: buildWebDavErrorMessage(response.status) }),
+    }, 200, corsHeaders);
 
   } catch (err: any) {
     return buildJsonResponse({ error: err.message }, 500, corsHeaders);

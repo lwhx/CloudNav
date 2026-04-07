@@ -101,7 +101,7 @@ const BackupModal: React.FC<BackupModalProps> = ({
     setStatusMsg('正在下载...');
     const data = await downloadBackup(config);
     
-    if (data) {
+    if (data.success !== false && data.links && data.categories) {
         onRestore(data.links, data.categories);
         // 恢复搜索配置（如果存在）
         if (data.searchConfig) {
@@ -118,7 +118,7 @@ const BackupModal: React.FC<BackupModalProps> = ({
         setStatusMsg('恢复成功！');
     } else {
         setSyncStatus('error');
-        setStatusMsg('下载失败或文件格式错误。');
+        setStatusMsg(data.error || '下载失败或文件格式错误。');
     }
   };
 

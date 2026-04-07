@@ -9,9 +9,20 @@ type BackupPayload = {
     webDavConfig?: WebDavConfig
 };
 
+type ProxyResult = {
+    success?: boolean,
+    status?: number,
+    error?: string,
+    links?: LinkItem[],
+    categories?: Category[],
+    searchConfig?: SearchConfig,
+    aiConfig?: AIConfig,
+    webDavConfig?: WebDavConfig
+};
+
 // Helper to call our Cloudflare Proxy
 // This solves the CORS issue by delegating the request to the backend
-const callWebDavProxy = async (operation: 'check' | 'upload' | 'download', config: WebDavConfig, payload?: any, filename?: string) => {
+const callWebDavProxy = async (operation: 'check' | 'upload' | 'download', config: WebDavConfig, payload?: any, filename?: string): Promise<ProxyResult> => {
     try {
         const authToken = localStorage.getItem('cloudnav_auth_token');
         const authIssuedAt = localStorage.getItem('lastLoginTime');
@@ -81,12 +92,16 @@ export const uploadBackupWithTimestamp = async (config: WebDavConfig, data: Back
     };
 };
 
-export const downloadBackup = async (config: WebDavConfig): Promise<BackupPayload | null> => {
+export const downloadBackup = async (config: WebDavConfig): Promise<ProxyResult> => {
     const result = await callWebDavProxy('download', config);
     
     // Check if the result looks like valid backup data
     if (result && Array.isArray(result.links) && Array.isArray(result.categories)) {
-        return result as BackupPayload;
+        return result;
     }
-    return null;
+    return {
+        success: false,
+        error: result?.error || '下载失败',
+        status: result?.status
+    };
 };
