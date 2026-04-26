@@ -148,6 +148,63 @@ const fetchAndEncodeFavicon = async (domain: string) => {
   return null;
 };
 
+const decodeHtmlEntities = (value: string) => value
+  .replace(/&amp;/g, '&')
+  .replace(/&lt;/g, '<')
+  .replace(/&gt;/g, '>')
+  .replace(/&quot;/g, '"')
+  .replace(/&#39;/g, "'")
+  .replace(/&#x27;/g, "'")
+  .replace(/&#x2F;/g, '/')
+  .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+  .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCharCode(parseInt(code, 16)));
+
+const extractPageTitle = (html: string) => {
+  const patterns = [
+    /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["'][^>]*>/i,
+    /<meta[^>]+name=["']twitter:title["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:title["'][^>]*>/i,
+    /<title[^>]*>([\s\S]*?)<\/title>/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    const rawTitle = match?.[1]?.replace(/\s+/g, ' ').trim();
+    if (rawTitle) {
+      return decodeHtmlEntities(rawTitle);
+    }
+  }
+
+  return '';
+};
+
+const fetchPageTitle = async (targetUrl: string) => {
+  const normalizedUrl = targetUrl.startsWith('http://') || targetUrl.startsWith('https://')
+    ? targetUrl
+    : `https://${targetUrl}`;
+  const parsedUrl = new URL(normalizedUrl);
+
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    throw new Error('Only HTTP and HTTPS URLs are supported');
+  }
+
+  const response = await fetch(parsedUrl.toString(), {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; CloudNav/1.0; +https://cloudnav.local)',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    },
+    cf: { cacheTtl: 300, cacheEverything: false },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch page with status ${response.status}`);
+  }
+
+  const html = await response.text();
+  return extractPageTitle(html);
+};
+
 // 处理 OPTIONS 请求（解决跨域预检）
 export const onRequestOptions = async (context: { request: Request }) => {
   return new Response(null, {
@@ -218,6 +275,27 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
       }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
+    }
+
+    if (getConfig === 'metadata') {
+      const targetUrl = url.searchParams.get('url');
+      if (!targetUrl) {
+        return new Response(JSON.stringify({ error: 'URL parameter is required' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+
+      try {
+        const title = await fetchPageTitle(targetUrl);
+        return new Response(JSON.stringify({ title }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({ title: '' }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
     }
     
     // 如果是获取图标请求

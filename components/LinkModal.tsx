@@ -23,6 +23,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
   const [icon, setIcon] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isFetchingIcon, setIsFetchingIcon] = useState(false);
+  const [isFetchingTitle, setIsFetchingTitle] = useState(false);
   const [autoFetchIcon, setAutoFetchIcon] = useState(true);
   const [batchMode, setBatchMode] = useState(false);
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
@@ -77,6 +78,16 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
       return () => clearTimeout(timer);
     }
   }, [url, autoFetchIcon, initialData]);
+
+  useEffect(() => {
+    if (url && !title.trim() && !initialData) {
+      const timer = setTimeout(() => {
+        handleFetchTitle();
+      }, 500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [url, title, initialData]);
 
   const handleDelete = () => {
     if (!initialData) return;
@@ -160,10 +171,6 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
       setIcon('');
       setDescription('');
       setPinned(false);
-      // 如果开启自动获取图标，尝试获取新图标
-      if (autoFetchIcon && finalUrl) {
-        handleFetchIcon();
-      }
     } else {
       onClose();
     }
@@ -192,6 +199,26 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
         console.error("AI Assist failed", e);
     } finally {
         setIsGenerating(false);
+    }
+  };
+
+  const handleFetchTitle = async () => {
+    if (!url || title.trim()) return;
+
+    setIsFetchingTitle(true);
+    try {
+      const response = await fetch(`/api/storage?getConfig=metadata&url=${encodeURIComponent(url)}`);
+      if (!response.ok) return;
+
+      const data = await response.json();
+      const fetchedTitle = typeof data.title === 'string' ? data.title.trim() : '';
+      if (fetchedTitle && !title.trim()) {
+        setTitle(fetchedTitle);
+      }
+    } catch (error) {
+      console.log("Failed to fetch title", error);
+    } finally {
+      setIsFetchingTitle(false);
     }
   };
 
@@ -320,14 +347,19 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
         <form onSubmit={handleSave} className="p-4 space-y-4">
           <div>
             <label className="block text-sm font-medium mb-1 dark:text-slate-300">标题</label>
-            <input
-              type="text"
-              required
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-              placeholder="网站名称"
-            />
+            <div className="relative">
+              <input
+                type="text"
+                required
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                className="w-full p-2 pr-9 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                placeholder="网站名称"
+              />
+              {isFetchingTitle && (
+                <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-slate-400" />
+              )}
+            </div>
           </div>
 
           <div>
