@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Sparkles, Loader2, Pin, Wand2, Trash2 } from 'lucide-react';
 import { LinkItem, Category, AIConfig } from '../types';
-import { generateLinkDescription, suggestCategory } from '../services/geminiService';
 
 interface LinkModalProps {
   isOpen: boolean;
@@ -27,10 +26,16 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
   const [autoFetchIcon, setAutoFetchIcon] = useState(true);
   const [batchMode, setBatchMode] = useState(false);
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
+  const titleFetchControllerRef = useRef<AbortController | null>(null);
+  const titleFetchUrlRef = useRef('');
   
   // 当模态框关闭时，重置批量模式为默认关闭状态
   useEffect(() => {
     if (!isOpen) {
+      titleFetchControllerRef.current?.abort();
+      titleFetchControllerRef.current = null;
+      titleFetchUrlRef.current = '';
+      setIsFetchingTitle(false);
       setBatchMode(false);
       setShowSuccessMessage(false);
     }
@@ -82,11 +87,16 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
   useEffect(() => {
     if (url && !title.trim() && !initialData) {
       const timer = setTimeout(() => {
-        handleFetchTitle();
+        handleFetchTitle(url);
       }, 500);
 
       return () => clearTimeout(timer);
     }
+
+    titleFetchControllerRef.current?.abort();
+    titleFetchControllerRef.current = null;
+    titleFetchUrlRef.current = '';
+    setIsFetchingTitle(false);
   }, [url, title, initialData]);
 
   const handleDelete = () => {
@@ -164,6 +174,10 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     
     // 批量模式下不关闭窗口，只显示成功提示
     if (batchMode) {
+      titleFetchControllerRef.current?.abort();
+      titleFetchControllerRef.current = null;
+      titleFetchUrlRef.current = '';
+      setIsFetchingTitle(false);
       setShowSuccessMessage(true);
       // 重置表单，但保留分类和批量模式设置
       setTitle('');
@@ -187,6 +201,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     
     // Parallel execution for speed
     try {
+        const { generateLinkDescription, suggestCategory } = await import('../services/geminiService');
         const descPromise = generateLinkDescription(title, url, aiConfig);
         const catPromise = suggestCategory(title, url, categories, aiConfig);
         
@@ -202,23 +217,38 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     }
   };
 
-  const handleFetchTitle = async () => {
-    if (!url || title.trim()) return;
+  const handleFetchTitle = async (targetUrl = url) => {
+    const requestUrl = targetUrl.trim();
+    if (!requestUrl || title.trim()) return;
 
+    titleFetchControllerRef.current?.abort();
+    const controller = new AbortController();
+    titleFetchControllerRef.current = controller;
+    titleFetchUrlRef.current = requestUrl;
     setIsFetchingTitle(true);
+
     try {
-      const response = await fetch(`/api/storage?getConfig=metadata&url=${encodeURIComponent(url)}`);
+      const response = await fetch(`/api/storage?getConfig=metadata&url=${encodeURIComponent(requestUrl)}`, {
+        signal: controller.signal,
+      });
       if (!response.ok) return;
 
       const data = await response.json();
       const fetchedTitle = typeof data.title === 'string' ? data.title.trim() : '';
-      if (fetchedTitle && !title.trim()) {
+      const isCurrentRequest = titleFetchUrlRef.current === requestUrl && url.trim() === requestUrl;
+      if (fetchedTitle && isCurrentRequest && !title.trim()) {
         setTitle(fetchedTitle);
       }
     } catch (error) {
-      console.log("Failed to fetch title", error);
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        console.log("Failed to fetch title", error);
+      }
     } finally {
-      setIsFetchingTitle(false);
+      if (titleFetchUrlRef.current === requestUrl) {
+        titleFetchControllerRef.current = null;
+        titleFetchUrlRef.current = '';
+        setIsFetchingTitle(false);
+      }
     }
   };
 

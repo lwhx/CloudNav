@@ -8,6 +8,7 @@ export interface LinkItem {
   createdAt: number;
   pinned?: boolean; // New field for pinning
   pinnedOrder?: number; // Field for pinned link sorting order
+  order?: number;
 }
 
 export interface Category {

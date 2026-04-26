@@ -1314,7 +1314,7 @@ function App() {
       
       if (activeIndex !== -1 && overIndex !== -1) {
         // 重新排序当前分类的链接
-        const reorderedCategoryLinks = arrayMove(categoryLinks, activeIndex, overIndex);
+        const reorderedCategoryLinks = arrayMove<LinkItem>(categoryLinks, activeIndex, overIndex);
         
         // 更新所有链接的顺序
         const updatedLinks = links.map(link => {
@@ -1347,7 +1347,7 @@ function App() {
       
       if (activeIndex !== -1 && overIndex !== -1) {
         // 重新排序置顶链接
-        const reorderedPinnedLinks = arrayMove(pinnedLinksList, activeIndex, overIndex);
+        const reorderedPinnedLinks = arrayMove<LinkItem>(pinnedLinksList, activeIndex, overIndex);
         
         // 创建一个映射，存储每个置顶链接的新pinnedOrder
         const pinnedOrderMap = new Map<string, number>();
@@ -2004,9 +2004,9 @@ function App() {
   }, [links, selectedCategory, searchQuery, categories, unlockedCategoryIds]);
 
   // 计算其他目录的搜索结果
-  const otherCategoryResults = useMemo(() => {
+  const otherCategoryResults = useMemo<Record<string, LinkItem[]>>(() => {
     if (!searchQuery.trim() || selectedCategory === 'all') {
-      return [];
+      return {};
     }
 
     const q = searchQuery.toLowerCase();
@@ -2792,9 +2792,7 @@ function App() {
                                     ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6' 
                                     : 'grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8'
                                 }`}>
-                                    {pinnedLinks.map(link => (
-                                        <SortableLinkCard key={link.id} link={link} />
-                                    ))}
+                                    {pinnedLinks.map(link => React.createElement(SortableLinkCard, { key: link.id, link }))}
                                 </div>
                             </SortableContext>
                         </DndContext>
@@ -2954,9 +2952,7 @@ function App() {
                                     ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6' 
                                     : 'grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8'
                                 }`}>
-                                    {displayedLinks.map(link => (
-                                        <SortableLinkCard key={link.id} link={link} />
-                                    ))}
+                                    {displayedLinks.map(link => React.createElement(SortableLinkCard, { key: link.id, link }))}
                                 </div>
                             </SortableContext>
                         </DndContext>
@@ -2989,7 +2985,7 @@ function App() {
                 </h2>
 
                 {Object.keys(otherCategoryResults).length > 0 ? (
-                  Object.entries(otherCategoryResults).map(([categoryId, links]) => {
+                  (Object.entries(otherCategoryResults) as [string, LinkItem[]][]).map(([categoryId, categoryLinks]) => {
                     const category = categories.find(c => c.id === categoryId);
                     if (!category) return null;
 
@@ -3000,7 +2996,7 @@ function App() {
                             {category.name}
                           </h3>
                           <span className="px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400 rounded-full">
-                            {links.length}
+                            {categoryLinks.length}
                           </span>
                         </div>
 
@@ -3009,7 +3005,7 @@ function App() {
                             ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6' 
                             : 'grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8'
                         }`}>
-                          {links.map(link => renderLinkCard(link))}
+                          {categoryLinks.map(link => renderLinkCard(link))}
                         </div>
                       </div>
                     );

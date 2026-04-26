@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Bot, Key, Globe, Sparkles, PauseCircle, Wrench, Box, Copy, Check, LayoutTemplate, Info, Download, Sidebar, Keyboard, MousePointerClick, AlertTriangle, Package, Zap, Menu, Upload } from 'lucide-react';
 import { AIConfig, LinkItem, Category, SiteSettings } from '../types';
-import { generateLinkDescription } from '../services/geminiService';
 import JSZip from 'jszip';
 
 interface SettingsModalProps {
@@ -132,6 +131,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     shouldStopRef.current = false;
     setProgress({ current: 0, total: missingLinks.length });
     
+    const { generateLinkDescription } = await import('../services/geminiService');
     let currentLinks = [...links];
 
     for (let i = 0; i < missingLinks.length; i++) {
