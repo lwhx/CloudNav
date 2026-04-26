@@ -173,7 +173,7 @@ function App() {
   const [prefillLink, setPrefillLink] = useState<Partial<LinkItem> | undefined>(undefined);
   
   // Sync State
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'saving' | 'saved' | 'error' | 'offline'>('idle');
   const [authToken, setAuthToken] = useState<string>('');
   const [requiresAuth, setRequiresAuth] = useState<boolean | null>(null); // null表示未检查，true表示需要认证，false表示不需要
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
@@ -338,7 +338,10 @@ function App() {
             return false;
         }
 
-        if (!response.ok) throw new Error('Network response was not ok');
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || `Cloud sync failed with status ${response.status}`);
+        }
         
         setSyncStatus('saved');
         setTimeout(() => setSyncStatus('idle'), 2000);
@@ -656,19 +659,25 @@ function App() {
         
         // 获取数据
         let hasCloudData = false;
+        const activeToken = savedToken || authToken;
         try {
             const res = await fetch('/api/storage', {
-                headers: authToken ? buildAuthHeaders(authToken) : {}
+                headers: activeToken ? buildAuthHeaders(activeToken) : {}
             });
             if (res.ok) {
                 const data = await res.json();
-                if (data.links && data.links.length > 0) {
-                    setLinks(data.links);
-                    setCategories(data.categories || DEFAULT_CATEGORIES);
-                    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
+                if (Array.isArray(data.links) || Array.isArray(data.categories)) {
+                    const cloudLinks = Array.isArray(data.links) ? data.links : [];
+                    const cloudCategories = Array.isArray(data.categories) ? data.categories : DEFAULT_CATEGORIES;
+                    setLinks(cloudLinks);
+                    setCategories(cloudCategories);
+                    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({
+                        links: cloudLinks,
+                        categories: cloudCategories
+                    }));
                     
                     // 加载链接图标缓存
-                    loadLinkIcons(data.links, data.categories || DEFAULT_CATEGORIES);
+                    loadLinkIcons(cloudLinks, cloudCategories);
                     hasCloudData = true;
                 }
             } else if (res.status === 401) {
