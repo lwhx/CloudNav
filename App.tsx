@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Search, Plus, Upload, Moon, Sun, Menu, 
   Trash2, Edit2, Loader2, Cloud, CheckCircle2, AlertCircle,
-  Pin, Settings, Lock, CloudCog, Github, GitFork, GripVertical, Save, CheckSquare, LogOut, ExternalLink, X
+  Pin, Settings, Lock, CloudCog, Github, GitFork, GripVertical, Save, CheckSquare, LogOut, ExternalLink, X, Info
 } from 'lucide-react';
 import {
   DndContext,
@@ -174,6 +174,7 @@ function App() {
   
   // Sync State
   const [syncStatus, setSyncStatus] = useState<'idle' | 'saving' | 'saved' | 'error' | 'offline'>('idle');
+  const [toasts, setToasts] = useState<Array<{ id: number; type: 'success' | 'error' | 'warning' | 'info'; message: string }>>([]);
   const [authToken, setAuthToken] = useState<string>('');
   const [requiresAuth, setRequiresAuth] = useState<boolean | null>(null); // null表示未检查，true表示需要认证，false表示不需要
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
@@ -260,6 +261,22 @@ function App() {
   
   // --- Helpers & Sync Logic ---
 
+  const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') => {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev, { id, type, message }]);
+    window.setTimeout(() => {
+      setToasts(prev => prev.filter(toast => toast.id !== id));
+    }, 3000);
+  };
+
+  const getSyncStatusText = () => {
+    if (!authToken) return '离线模式';
+    if (syncStatus === 'saving') return '正在同步';
+    if (syncStatus === 'saved') return '已同步';
+    if (syncStatus === 'error') return '同步失败';
+    return '云端已连接';
+  };
+
   const loadFromLocal = () => {
     const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (stored) {
@@ -320,14 +337,12 @@ function App() {
         });
 
         if (response.status === 401) {
-            // 检查是否是密码过期
             try {
                 const errorData = await response.json();
                 if (errorData.error && errorData.error.includes('过期')) {
-                    alert('您的密码已过期，请重新登录');
+                    showToast('登录已过期，请重新登录', 'warning');
                 }
             } catch (e) {
-                // 如果无法解析错误信息，使用默认提示
                 console.error('Failed to parse error response', e);
             }
             
@@ -344,11 +359,11 @@ function App() {
         }
         
         setSyncStatus('saved');
-        setTimeout(() => setSyncStatus('idle'), 2000);
         return true;
     } catch (error) {
         console.error("Sync failed", error);
         setSyncStatus('error');
+        showToast('云端同步失败，本机已保存', 'error');
         return false;
     }
   };
@@ -960,7 +975,7 @@ function App() {
     if (!authToken) { setIsAuthOpen(true); return; }
     
     if (selectedLinks.size === 0) {
-      alert('请先选择要删除的链接');
+      showToast('请先选择要删除的链接', 'warning');
       return;
     }
     
@@ -976,7 +991,7 @@ function App() {
     if (!authToken) { setIsAuthOpen(true); return; }
     
     if (selectedLinks.size === 0) {
-      alert('请先选择要移动的链接');
+      showToast('请先选择要移动的链接', 'warning');
       return;
     }
     
@@ -1056,7 +1071,7 @@ function App() {
                 if (expiryTimeMs > 0 && timeDiff > expiryTimeMs) {
                     clearAuthSession();
                     setIsAuthOpen(true);
-                    alert('您的密码已过期，请重新登录');
+                    showToast('登录已过期，请重新登录', 'warning');
                     return false;
                 }
             }
@@ -1204,7 +1219,7 @@ function App() {
       const mergedLinks = [...links, ...newLinks];
       updateData(mergedLinks, mergedCategories);
       setIsImportModalOpen(false);
-      alert(`成功导入 ${newLinks.length} 个新书签!`);
+      showToast(`成功导入 ${newLinks.length} 个新书签`, 'success');
   };
 
   const handleAddLink = (data: Omit<LinkItem, 'id' | 'createdAt'>) => {
@@ -1560,7 +1575,7 @@ function App() {
       
       // 防止删除"常用推荐"分类
       if (catId === 'common') {
-          alert('"常用推荐"分类不能被删除');
+          showToast('常用推荐分类不能被删除', 'warning');
           return;
       }
       
@@ -2242,6 +2257,35 @@ function App() {
           transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)',
         }}
       />
+      <div className="fixed right-4 top-4 z-[130] flex w-[calc(100%-2rem)] max-w-sm flex-col gap-2 sm:right-6 sm:top-6">
+        {toasts.map(toast => (
+          <div
+            key={toast.id}
+            className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm shadow-xl backdrop-blur-md transition-all ${
+              toast.type === 'success'
+                ? 'border-green-200 bg-green-50/95 text-green-700 dark:border-green-800 dark:bg-green-950/90 dark:text-green-300'
+                : toast.type === 'error'
+                  ? 'border-red-200 bg-red-50/95 text-red-700 dark:border-red-800 dark:bg-red-950/90 dark:text-red-300'
+                  : toast.type === 'warning'
+                    ? 'border-amber-200 bg-amber-50/95 text-amber-700 dark:border-amber-800 dark:bg-amber-950/90 dark:text-amber-300'
+                    : 'border-blue-200 bg-blue-50/95 text-blue-700 dark:border-blue-800 dark:bg-blue-950/90 dark:text-blue-300'
+            }`}
+          >
+            {toast.type === 'success' && <CheckCircle2 className="h-4 w-4 shrink-0" />}
+            {toast.type === 'error' && <AlertCircle className="h-4 w-4 shrink-0" />}
+            {toast.type === 'warning' && <AlertCircle className="h-4 w-4 shrink-0" />}
+            {toast.type === 'info' && <Info className="h-4 w-4 shrink-0" />}
+            <span className="leading-5">{toast.message}</span>
+            <button
+              onClick={() => setToasts(prev => prev.filter(item => item.id !== toast.id))}
+              className="ml-auto rounded-full p-1 opacity-70 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
+              aria-label="关闭通知"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
       <AuthModal
         isOpen={isAuthOpen}
         onLogin={handleLogin}
@@ -2427,11 +2471,20 @@ function App() {
             </div>
             
             <div className="flex items-center justify-between text-xs px-2 mt-2">
-               <div className="flex items-center gap-1 text-slate-400">
-                 {syncStatus === 'saving' && <Loader2 className="animate-spin w-3 h-3 text-blue-500" />}
-                 {syncStatus === 'saved' && <CheckCircle2 className="w-3 h-3 text-green-500" />}
-                 {syncStatus === 'error' && <AlertCircle className="w-3 h-3 text-red-500" />}
-                 {authToken ? <span className="text-green-600">已同步</span> : <span className="text-amber-500">离线</span>}
+               <div className={`flex items-center gap-1.5 rounded-full px-2 py-1 transition-colors ${
+                 syncStatus === 'error'
+                   ? 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400'
+                   : syncStatus === 'saving'
+                     ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
+                     : authToken
+                       ? 'bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400'
+                       : 'bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400'
+               }`}>
+                 {syncStatus === 'saving' && <Loader2 className="animate-spin w-3 h-3" />}
+                 {syncStatus === 'saved' && <CheckCircle2 className="w-3 h-3" />}
+                 {syncStatus === 'error' && <AlertCircle className="w-3 h-3" />}
+                 {syncStatus !== 'saving' && syncStatus !== 'saved' && syncStatus !== 'error' && <Cloud className="w-3 h-3" />}
+                 <span>{getSyncStatusText()}</span>
                </div>
 
                <a 
