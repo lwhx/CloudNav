@@ -39,6 +39,7 @@ import ContextMenu from './components/ContextMenu';
 import QRCodeModal from './components/QRCodeModal';
 import ToastContainer from './components/ToastContainer';
 import { useToast } from './hooks/useToast';
+import { useTheme } from './hooks/useTheme';
 
 // --- 配置项 ---
 // 项目核心仓库地址
@@ -98,15 +99,13 @@ const createRoundedFavicon = (source: string): Promise<string> => {
 };
 
 function App() {
-  const themeButtonRef = useRef<HTMLButtonElement | null>(null);
-  const themeTransitionTimerRef = useRef<number | null>(null);
+  const { darkMode, themeTransition, themeButtonRef, toggleTheme } = useTheme();
 
   // --- State ---
   const [links, setLinks] = useState<LinkItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [darkMode, setDarkMode] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   
   // Search Mode State
@@ -213,20 +212,7 @@ function App() {
 
   // Mobile Search State
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
-  const [themeTransition, setThemeTransition] = useState<{
-    visible: boolean;
-    x: number;
-    y: number;
-    radius: number;
-    targetDark: boolean;
-  }>({
-    visible: false,
-    x: 0,
-    y: 0,
-    radius: 0,
-    targetDark: false,
-  });
-  
+
   // Category Action Auth State
   const [categoryActionAuth, setCategoryActionAuth] = useState<{
     isOpen: boolean;
@@ -571,12 +557,6 @@ function App() {
   // --- Effects ---
 
   useEffect(() => {
-    // Theme init
-    if (localStorage.getItem('theme') === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-      setDarkMode(true);
-      document.documentElement.classList.add('dark');
-    }
-
     // Load Token and check expiry
     const savedToken = localStorage.getItem(AUTH_KEY);
     const lastLoginTime = localStorage.getItem(AUTH_TIME_KEY);
@@ -875,71 +855,6 @@ function App() {
     updateFavicon();
   }, [siteSettings.title, siteSettings.favicon]);
 
-  useEffect(() => {
-    return () => {
-      if (themeTransitionTimerRef.current) {
-        window.clearTimeout(themeTransitionTimerRef.current);
-      }
-    };
-  }, []);
-
-  const applyThemeMode = (newMode: boolean) => {
-    setDarkMode(newMode);
-    if (newMode) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
-    }
-  };
-
-  const toggleTheme = () => {
-    const newMode = !darkMode;
-    const rect = themeButtonRef.current?.getBoundingClientRect();
-    const x = rect ? rect.left + rect.width / 2 : window.innerWidth - 48;
-    const y = rect ? rect.top + rect.height / 2 : 32;
-    const radius = Math.hypot(
-      Math.max(x, window.innerWidth - x),
-      Math.max(y, window.innerHeight - y)
-    );
-
-    if (themeTransitionTimerRef.current) {
-      window.clearTimeout(themeTransitionTimerRef.current);
-    }
-
-    setThemeTransition({
-      visible: true,
-      x,
-      y,
-      radius: 0,
-      targetDark: newMode,
-    });
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setThemeTransition({
-          visible: true,
-          x,
-          y,
-          radius,
-          targetDark: newMode,
-        });
-      });
-    });
-
-    themeTransitionTimerRef.current = window.setTimeout(() => {
-      applyThemeMode(newMode);
-      setThemeTransition(prev => ({
-        ...prev,
-        visible: false,
-        radius: 0,
-      }));
-      themeTransitionTimerRef.current = null;
-    }, 620);
-  };
-
-  // 视图模式切换处理函数
   const handleViewModeChange = (cardStyle: 'detailed' | 'simple') => {
     const newSiteSettings = { ...siteSettings, cardStyle };
     setSiteSettings(newSiteSettings);
