@@ -1085,21 +1085,20 @@ function App() {
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    // 如果服务器有数据，使用服务器数据
-                    if (data.links && data.links.length > 0) {
-                        setLinks(data.links);
-                        setCategories(data.categories || DEFAULT_CATEGORIES);
-                        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
-                        
-                        // 加载链接图标缓存
-                        loadLinkIcons(data.links, data.categories || DEFAULT_CATEGORIES);
+                    if (Array.isArray(data.links) || Array.isArray(data.categories)) {
+                        const cloudLinks = Array.isArray(data.links) ? data.links : [];
+                        const cloudCategories = Array.isArray(data.categories) ? data.categories : DEFAULT_CATEGORIES;
+
+                        setLinks(cloudLinks);
+                        setCategories(cloudCategories);
+                        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({
+                            links: cloudLinks,
+                            categories: cloudCategories
+                        }));
+                        loadLinkIcons(cloudLinks, cloudCategories);
                     } else {
-                        // 如果服务器没有数据，使用本地数据
                         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({ links, categories }));
-                        // 并将本地数据同步到服务器
                         syncToCloud(links, categories, password);
-                        
-                        // 加载链接图标缓存
                         loadLinkIcons(links, categories);
                     }
                 } 
