@@ -41,6 +41,7 @@ import ToastContainer from './components/ToastContainer';
 import { useToast } from './hooks/useToast';
 import { useTheme } from './hooks/useTheme';
 import { useSiteSettings } from './hooks/useSiteSettings';
+import { useContextMenu } from './hooks/useContextMenu';
 
 // --- 配置项 ---
 // 项目核心仓库地址
@@ -127,28 +128,6 @@ function App() {
   const [isBatchEditMode, setIsBatchEditMode] = useState(false); // 是否处于批量编辑模式
   const [selectedLinks, setSelectedLinks] = useState<Set<string>>(new Set()); // 选中的链接ID集合
   
-  // Context Menu State
-  const [contextMenu, setContextMenu] = useState<{
-    isOpen: boolean;
-    position: { x: number; y: number };
-    link: LinkItem | null;
-  }>({
-    isOpen: false,
-    position: { x: 0, y: 0 },
-    link: null
-  });
-  
-  // QR Code Modal State
-  const [qrCodeModal, setQrCodeModal] = useState<{
-    isOpen: boolean;
-    url: string;
-    title: string;
-  }>({
-    isOpen: false,
-    url: '',
-    title: ''
-  });
-
   // Mobile Search State
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
 
@@ -307,103 +286,30 @@ function App() {
     return false;
   };
 
-  // --- Context Menu Functions ---
-  const handleContextMenu = (event: React.MouseEvent, link: LinkItem) => {
-    event.preventDefault();
-    event.stopPropagation();
-    
-    // 在批量编辑模式下禁用右键菜单
-    if (isBatchEditMode) return;
-    
-    setContextMenu({
-      isOpen: true,
-      position: { x: event.clientX, y: event.clientY },
-      link: link
-    });
-  };
-
-  const closeContextMenu = () => {
-    setContextMenu({
-      isOpen: false,
-      position: { x: 0, y: 0 },
-      link: null
-    });
-  };
-
-  const copyLinkToClipboard = () => {
-    if (!contextMenu.link) return;
-    
-    navigator.clipboard.writeText(contextMenu.link.url)
-      .then(() => {
-        // 可以添加一个短暂的提示
-        console.log('链接已复制到剪贴板');
-      })
-      .catch(err => {
-        console.error('复制链接失败:', err);
+  // --- Context Menu Hook ---
+  const {
+    contextMenu, qrCodeModal,
+    handleContextMenu, closeContextMenu, copyLinkToClipboard,
+    showQRCode, editLinkFromContextMenu, deleteLinkFromContextMenu,
+    togglePinFromContextMenu, closeQrCodeModal,
+  } = useContextMenu({
+    isBatchEditMode,
+    requireAuth,
+    onEditLink: (link) => { setEditingLink(link); setIsModalOpen(true); },
+    onDeleteLink: (linkId) => { const newLinks = links.filter(l => l.id !== linkId); updateData(newLinks, categories); },
+    onTogglePin: (link) => {
+      const updated = links.map(l => {
+        if (l.id === link.id) {
+          const isPinned = !l.pinned;
+          return { ...l, pinned: isPinned, pinnedOrder: isPinned ? links.filter(x => x.pinned).length : undefined };
+        }
+        return l;
       });
-    
-    closeContextMenu();
-  };
+      updateData(updated, categories);
+    },
+  });
 
-  const showQRCode = () => {
-    if (!contextMenu.link) return;
-    
-    setQrCodeModal({
-      isOpen: true,
-      url: contextMenu.link.url,
-      title: contextMenu.link.title
-    });
-    
-    closeContextMenu();
-  };
-
-  const editLinkFromContextMenu = () => {
-    if (!contextMenu.link) return;
-    if (!requireAuth()) return;
-    
-    setEditingLink(contextMenu.link);
-    setIsModalOpen(true);
-    closeContextMenu();
-  };
-
-  const deleteLinkFromContextMenu = () => {
-    if (!contextMenu.link) return;
-    if (!requireAuth()) return;
-    
-    if (window.confirm(`确定要删除"${contextMenu.link.title}"吗？`)) {
-      const newLinks = links.filter(link => link.id !== contextMenu.link!.id);
-      updateData(newLinks, categories);
-    }
-    
-    closeContextMenu();
-  };
-
-  const togglePinFromContextMenu = () => {
-    if (!contextMenu.link) return;
-    if (!requireAuth()) return;
-    
-    const linkToToggle = links.find(l => l.id === contextMenu.link!.id);
-    if (!linkToToggle) return;
-    
-    // 如果是设置为置顶，则设置pinnedOrder为当前置顶链接数量
-    // 如果是取消置顶，则清除pinnedOrder
-    const updated = links.map(l => {
-      if (l.id === contextMenu.link!.id) {
-        const isPinned = !l.pinned;
-        return { 
-          ...l, 
-          pinned: isPinned,
-          pinnedOrder: isPinned ? links.filter(link => link.pinned).length : undefined
-        };
-      }
-      return l;
-    });
-    
-    updateData(updated, categories);
-    closeContextMenu();
-  };
-
-  // 加载链接图标缓存
+  // --- Load Link Icons ---
   const loadLinkIcons = async (linksToLoad: LinkItem[], categoriesToUse: Category[]) => {
     if (!authToken) return; // 只有在已登录状态下才加载图标缓存
     
@@ -2838,7 +2744,7 @@ function App() {
             isOpen={qrCodeModal.isOpen}
             url={qrCodeModal.url || ''}
             title={qrCodeModal.title || ''}
-            onClose={() => setQrCodeModal({ isOpen: false, url: '', title: '' })}
+            onClose={closeQrCodeModal}
           />
       </>
       )}
