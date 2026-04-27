@@ -40,6 +40,7 @@ import QRCodeModal from './components/QRCodeModal';
 import ToastContainer from './components/ToastContainer';
 import { useToast } from './hooks/useToast';
 import { useTheme } from './hooks/useTheme';
+import { useSiteSettings } from './hooks/useSiteSettings';
 
 // --- 配置项 ---
 // 项目核心仓库地址
@@ -52,54 +53,10 @@ const WEBDAV_CONFIG_KEY = 'cloudnav_webdav_config';
 const AI_CONFIG_KEY = 'cloudnav_ai_config';
 const SEARCH_CONFIG_KEY = 'cloudnav_search_config';
 
-const createRoundedFavicon = (source: string): Promise<string> => {
-  return new Promise((resolve) => {
-    if (!source) {
-      resolve(source);
-      return;
-    }
-
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      try {
-        const size = 64;
-        const radius = 14;
-        const canvas = document.createElement('canvas');
-        canvas.width = size;
-        canvas.height = size;
-        const ctx = canvas.getContext('2d');
-
-        if (!ctx) {
-          resolve(source);
-          return;
-        }
-
-        ctx.beginPath();
-        ctx.moveTo(radius, 0);
-        ctx.lineTo(size - radius, 0);
-        ctx.quadraticCurveTo(size, 0, size, radius);
-        ctx.lineTo(size, size - radius);
-        ctx.quadraticCurveTo(size, size, size - radius, size);
-        ctx.lineTo(radius, size);
-        ctx.quadraticCurveTo(0, size, 0, size - radius);
-        ctx.lineTo(0, radius);
-        ctx.quadraticCurveTo(0, 0, radius, 0);
-        ctx.closePath();
-        ctx.clip();
-        ctx.drawImage(img, 0, 0, size, size);
-        resolve(canvas.toDataURL('image/png'));
-      } catch (e) {
-        resolve(source);
-      }
-    };
-    img.onerror = () => resolve(source);
-    img.src = source;
-  });
-};
 
 function App() {
   const { darkMode, themeTransition, themeButtonRef, toggleTheme } = useTheme();
+  const { siteSettings, setSiteSettings, handleViewModeChange } = useSiteSettings();
 
   // --- State ---
   const [links, setLinks] = useState<LinkItem[]>([]);
@@ -140,24 +97,6 @@ function App() {
       };
   });
 
-  // Site Settings State
-  const [siteSettings, setSiteSettings] = useState(() => {
-      const saved = localStorage.getItem('cloudnav_site_settings');
-      if (saved) {
-          try {
-              return JSON.parse(saved);
-          } catch (e) {}
-      }
-      return {
-          title: '',
-          navTitle: 'CloudNav',
-          favicon: '',
-          cardStyle: 'detailed' as const,
-          requirePasswordOnVisit: false,
-          passwordExpiryDays: 7
-      };
-  });
-  
   // Modals
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
@@ -832,34 +771,6 @@ function App() {
 
     initData();
   }, []);
-
-  // Update page title and favicon when site settings change
-  useEffect(() => {
-    if (siteSettings.title) {
-      document.title = siteSettings.title;
-    }
-    
-    const updateFavicon = async () => {
-      if (!siteSettings.favicon) return;
-
-      const roundedFavicon = await createRoundedFavicon(siteSettings.favicon);
-      const existingFavicons = document.querySelectorAll('link[rel="icon"]');
-      existingFavicons.forEach(favicon => favicon.remove());
-
-      const favicon = document.createElement('link');
-      favicon.rel = 'icon';
-      favicon.href = roundedFavicon;
-      document.head.appendChild(favicon);
-    };
-
-    updateFavicon();
-  }, [siteSettings.title, siteSettings.favicon]);
-
-  const handleViewModeChange = (cardStyle: 'detailed' | 'simple') => {
-    const newSiteSettings = { ...siteSettings, cardStyle };
-    setSiteSettings(newSiteSettings);
-    localStorage.setItem('cloudnav_site_settings', JSON.stringify(newSiteSettings));
-  };
 
   // --- Batch Edit Functions ---
   const toggleBatchEditMode = () => {
