@@ -7,23 +7,14 @@ import {
 } from 'lucide-react';
 import {
   DndContext,
-  DragEndEvent,
   closestCenter,
   closestCorners,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  KeyboardSensor,
 } from '@dnd-kit/core';
 import {
-  arrayMove,
   SortableContext,
-  sortableKeyboardCoordinates,
   verticalListSortingStrategy,
   rectSortingStrategy,
-  useSortable,
 } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import { LinkItem, Category, DEFAULT_CATEGORIES, INITIAL_LINKS, WebDavConfig, AIConfig, SearchMode, ExternalSearchSource, SearchConfig } from './types';
 import { parseBookmarks } from './services/bookmarkParser';
 import Icon from './components/Icon';
@@ -42,6 +33,13 @@ import { useToast } from './hooks/useToast';
 import { useTheme } from './hooks/useTheme';
 import { useSiteSettings } from './hooks/useSiteSettings';
 import { useContextMenu } from './hooks/useContextMenu';
+import { useAppDataSync } from './hooks/useAppDataSync';
+import { useAuthSession } from './hooks/useAuthSession';
+import { createDefaultSearchSources, useSearchConfig } from './hooks/useSearchConfig';
+import { useCategoryAccess } from './hooks/useCategoryAccess';
+import { useLinkOrganizer } from './hooks/useLinkOrganizer';
+import LinkCard from './components/links/LinkCard';
+import SortableLinkCard from './components/links/SortableLinkCard';
 
 // --- 配置项 ---
 // 项目核心仓库地址
@@ -60,20 +58,10 @@ function App() {
   const { siteSettings, setSiteSettings, handleViewModeChange } = useSiteSettings();
 
   // --- State ---
-  const [links, setLinks] = useState<LinkItem[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   
-  // Search Mode State
-  const [searchMode, setSearchMode] = useState<SearchMode>('internal');
-  const [externalSearchSources, setExternalSearchSources] = useState<ExternalSearchSource[]>([]);
-  const [isLoadingSearchConfig, setIsLoadingSearchConfig] = useState(true);
-  
-  // Category Security State
-  const [unlockedCategoryIds, setUnlockedCategoryIds] = useState<Set<string>>(new Set());
-
   // WebDAV Config State
   const [webDavConfig, setWebDavConfig] = useState<WebDavConfig>({
       url: '',
@@ -106,66 +94,26 @@ function App() {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isSearchConfigModalOpen, setIsSearchConfigModalOpen] = useState(false);
-  const [catAuthModalData, setCatAuthModalData] = useState<Category | null>(null);
-  const [pendingProtectedCategoryId, setPendingProtectedCategoryId] = useState<string | null>(null);
-  
   const [editingLink, setEditingLink] = useState<LinkItem | undefined>(undefined);
   // State for data pre-filled from Bookmarklet
   const [prefillLink, setPrefillLink] = useState<Partial<LinkItem> | undefined>(undefined);
   
   // Sync State
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'saving' | 'saved' | 'error' | 'offline'>('idle');
   const { toasts, showToast, removeToast } = useToast();
-  const [authToken, setAuthToken] = useState<string>('');
-  const [requiresAuth, setRequiresAuth] = useState<boolean | null>(null); // null表示未检查，true表示需要认证，false表示不需要
-  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
-  
-  // Sort State
-  const [isSortingMode, setIsSortingMode] = useState<string | null>(null); // 存储正在排序的分类ID，null表示不在排序模式
-  const [isSortingPinned, setIsSortingPinned] = useState(false); // 是否正在排序置顶链接
-  
-  // Batch Edit State
-  const [isBatchEditMode, setIsBatchEditMode] = useState(false); // 是否处于批量编辑模式
-  const [selectedLinks, setSelectedLinks] = useState<Set<string>>(new Set()); // 选中的链接ID集合
+  const {
+    authToken,
+    setAuthToken,
+    requiresAuth,
+    setRequiresAuth,
+    isCheckingAuth,
+    setIsCheckingAuth,
+    buildAuthHeaders,
+    clearAuthSession,
+    requireAuth: requireAuthSession,
+  } = useAuthSession();
   
   // Mobile Search State
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
-
-  // Category Action Auth State
-  const [categoryActionAuth, setCategoryActionAuth] = useState<{
-    isOpen: boolean;
-    action: 'edit' | 'delete';
-    categoryId: string;
-    categoryName: string;
-  }>({
-    isOpen: false,
-    action: 'edit',
-    categoryId: '',
-    categoryName: ''
-  });
-
-  const buildAuthHeaders = (token?: string | null, extraHeaders: Record<string, string> = {}) => {
-    const headers: Record<string, string> = { ...extraHeaders };
-    const resolvedToken = token ?? authToken ?? localStorage.getItem(AUTH_KEY);
-    const authIssuedAt = localStorage.getItem(AUTH_TIME_KEY);
-
-    if (resolvedToken) {
-      headers['x-auth-password'] = resolvedToken;
-    }
-    if (authIssuedAt) {
-      headers['x-auth-issued-at'] = authIssuedAt;
-    }
-
-    return headers;
-  };
-
-  const clearAuthSession = () => {
-    setAuthToken('');
-    localStorage.removeItem(AUTH_KEY);
-    localStorage.removeItem(AUTH_TIME_KEY);
-  };
-  
-  // --- Helpers & Sync Logic ---
 
   const getSyncStatusText = () => {
     if (!authToken) return '离线模式';
@@ -175,229 +123,92 @@ function App() {
     return '云端已连接';
   };
 
-  const loadFromLocal = () => {
-    const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        let loadedCategories = parsed.categories || DEFAULT_CATEGORIES;
-        
-        // 确保"常用推荐"分类始终存在，并确保它是第一个分类
-        if (!loadedCategories.some(c => c.id === 'common')) {
-          loadedCategories = [
-            { id: 'common', name: '常用推荐', icon: 'Star' },
-            ...loadedCategories
-          ];
-        } else {
-          // 如果"常用推荐"分类已存在，确保它是第一个分类
-          const commonIndex = loadedCategories.findIndex(c => c.id === 'common');
-          if (commonIndex > 0) {
-            const commonCategory = loadedCategories[commonIndex];
-            loadedCategories = [
-              commonCategory,
-              ...loadedCategories.slice(0, commonIndex),
-              ...loadedCategories.slice(commonIndex + 1)
-            ];
-          }
-        }
-        
-        // 检查是否有链接的categoryId不存在于当前分类中，将这些链接移动到"常用推荐"
-        const validCategoryIds = new Set(loadedCategories.map(c => c.id));
-        let loadedLinks = parsed.links || INITIAL_LINKS;
-        loadedLinks = loadedLinks.map(link => {
-          if (!validCategoryIds.has(link.categoryId)) {
-            return { ...link, categoryId: 'common' };
-          }
-          return link;
-        });
-        
-        setLinks(loadedLinks);
-        setCategories(loadedCategories);
-      } catch (e) {
-        setLinks(INITIAL_LINKS);
-        setCategories(DEFAULT_CATEGORIES);
-      }
-    } else {
-      setLinks(INITIAL_LINKS);
-      setCategories(DEFAULT_CATEGORIES);
-    }
-  };
+  const requireAuth = () => requireAuthSession(() => setIsAuthOpen(true));
 
-  const syncToCloud = async (newLinks: LinkItem[], newCategories: Category[], token: string) => {
-    setSyncStatus('saving');
-    try {
-        const response = await fetch('/api/storage', {
-            method: 'POST',
-            headers: buildAuthHeaders(token, {
-                'Content-Type': 'application/json',
-            }),
-            body: JSON.stringify({ links: newLinks, categories: newCategories })
-        });
-
-        if (response.status === 401) {
-            try {
-                const errorData = await response.json();
-                if (errorData.error && errorData.error.includes('过期')) {
-                    showToast('登录已过期，请重新登录', 'warning');
-                }
-            } catch (e) {
-                console.error('Failed to parse error response', e);
-            }
-            
-            setAuthToken('');
-            localStorage.removeItem(AUTH_KEY);
-            setIsAuthOpen(true);
-            setSyncStatus('error');
-            return false;
-        }
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(errorText || `Cloud sync failed with status ${response.status}`);
-        }
-        
-        setSyncStatus('saved');
-        return true;
-    } catch (error) {
-        console.error("Sync failed", error);
-        setSyncStatus('error');
-        showToast('云端同步失败，本机已保存', 'error');
-        return false;
-    }
-  };
-
-  const updateData = (newLinks: LinkItem[], newCategories: Category[]) => {
-      // 1. Optimistic UI Update
-      setLinks(newLinks);
-      setCategories(newCategories);
-      
-      // 2. Save to Local Cache
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({ links: newLinks, categories: newCategories }));
-
-      // 3. Sync to Cloud (if authenticated)
-      if (authToken) {
-          syncToCloud(newLinks, newCategories, authToken);
-      }
-  };
-
-  const requireAuth = () => {
-    if (authToken) return true;
-    setIsAuthOpen(true);
-    return false;
-  };
-
-  // --- Context Menu Hook ---
   const {
-    contextMenu, qrCodeModal,
-    handleContextMenu, closeContextMenu, copyLinkToClipboard,
-    showQRCode, editLinkFromContextMenu, deleteLinkFromContextMenu,
-    togglePinFromContextMenu, closeQrCodeModal,
-  } = useContextMenu({
-    isBatchEditMode,
-    requireAuth,
-    onEditLink: (link) => { setEditingLink(link); setIsModalOpen(true); },
-    onDeleteLink: (linkId) => { const newLinks = links.filter(l => l.id !== linkId); updateData(newLinks, categories); },
-    onTogglePin: (link) => {
-      const updated = links.map(l => {
-        if (l.id === link.id) {
-          const isPinned = !l.pinned;
-          return { ...l, pinned: isPinned, pinnedOrder: isPinned ? links.filter(x => x.pinned).length : undefined };
-        }
-        return l;
-      });
-      updateData(updated, categories);
+    links,
+    setLinks,
+    categories,
+    setCategories,
+    syncStatus,
+    setSyncStatus,
+    loadFromLocal,
+    syncToCloud,
+    updateData,
+    loadLinkIcons,
+  } = useAppDataSync({
+    authToken,
+    buildAuthHeaders,
+    onAuthExpired: () => {
+      clearAuthSession();
+      setIsAuthOpen(true);
+      showToast('登录已过期，请重新登录', 'warning');
+    },
+    onSyncError: () => {
+      showToast('云端同步失败，本机已保存', 'error');
     },
   });
 
-  // --- Load Link Icons ---
-  const loadLinkIcons = async (linksToLoad: LinkItem[], categoriesToUse: Category[]) => {
-    if (!authToken) return; // 只有在已登录状态下才加载图标缓存
-    
-    const updatedLinks = [...linksToLoad];
-    const domainsToFetch = new Set<string>();
-    
-    // 收集所有链接的域名（包括已有图标的链接）
-    for (const link of updatedLinks) {
-      if (link.url) {
-        try {
-          let domain = link.url;
-          if (!link.url.startsWith('http://') && !link.url.startsWith('https://')) {
-            domain = 'https://' + link.url;
-          }
-          
-          if (domain.startsWith('http://') || domain.startsWith('https://')) {
-            const urlObj = new URL(domain);
-            domain = urlObj.hostname;
-            if (!link.icon || !link.icon.startsWith('data:')) {
-              domainsToFetch.add(domain);
-            }
-          }
-        } catch (e) {
-          console.error("Failed to parse URL for icon loading", e);
-        }
-      }
-    }
-    
-    // 批量获取图标
-    if (domainsToFetch.size > 0) {
-      const iconPromises = Array.from(domainsToFetch).map(async (domain) => {
-        try {
-          const response = await fetch(`/api/storage?getConfig=favicon&domain=${encodeURIComponent(domain)}&fetch=true`);
-          if (response.ok) {
-            const data = await response.json();
-            if (data.cached && data.icon) {
-              return { domain, icon: data.icon };
-            }
-          }
-        } catch (error) {
-          console.log(`Failed to fetch cached icon for ${domain}`, error);
-        }
-        return null;
-      });
-      
-      const iconResults = await Promise.all(iconPromises);
-      
-      // 更新链接的图标
-      let hasChanges = false;
+  const {
+    searchMode,
+    setSearchMode,
+    externalSearchSources,
+    setExternalSearchSources,
+    isLoadingSearchConfig,
+    setIsLoadingSearchConfig,
+    showSearchSourcePopup,
+    setShowSearchSourcePopup,
+    hoveredSearchSource,
+    setHoveredSearchSource,
+    selectedSearchSource,
+    setSelectedSearchSource,
+    isIconHovered,
+    setIsIconHovered,
+    isPopupHovered,
+    setIsPopupHovered,
+    handleSearchSourceSelect,
+    handleSaveSearchConfig,
+    openSearchConfigModal: openSearchConfigModalFromHook,
+    handleSearchConfigModalSave,
+    handleSearchModeChange,
+    handleExternalSearch,
+  } = useSearchConfig({
+    authToken,
+    buildAuthHeaders,
+    requireAuth,
+    searchQuery,
+  });
 
-      iconResults.forEach(result => {
-        if (result) {
-          updatedLinks.forEach(linkToUpdate => {
-            if (!linkToUpdate.url) return;
+  const openSearchConfigModal = () => openSearchConfigModalFromHook(() => setIsSearchConfigModalOpen(true));
 
-            try {
-              let domain = linkToUpdate.url;
-              if (!linkToUpdate.url.startsWith('http://') && !linkToUpdate.url.startsWith('https://')) {
-                domain = 'https://' + linkToUpdate.url;
-              }
-
-              if (!domain.startsWith('http://') && !domain.startsWith('https://')) {
-                return;
-              }
-
-              const urlObj = new URL(domain);
-              if (urlObj.hostname !== result.domain) {
-                return;
-              }
-
-              if (linkToUpdate.icon !== result.icon) {
-                linkToUpdate.icon = result.icon;
-                hasChanges = true;
-              }
-            } catch (e) {
-              return;
-            }
-          });
-        }
-      });
-      
-      if (hasChanges) {
-        setLinks(updatedLinks);
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({ links: updatedLinks, categories: categoriesToUse }));
-        syncToCloud(updatedLinks, categoriesToUse, authToken);
-      }
-    }
-  };
+  const {
+    unlockedCategoryIds,
+    catAuthModalData,
+    setCatAuthModalData,
+    pendingProtectedCategoryId,
+    setPendingProtectedCategoryId,
+    categoryActionAuth,
+    handleCategoryClick,
+    handleUnlockCategory,
+    handleUpdateCategories,
+    handleDeleteCategory,
+    handleCategoryActionAuth,
+    openCategoryActionAuth,
+    closeCategoryActionAuth,
+    requiresGlobalCategoryAuth,
+    isCategoryLocked,
+  } = useCategoryAccess({
+    authToken,
+    categories,
+    links,
+    updateData,
+    requireAuth,
+    showToast,
+    buildAuthHeaders,
+    setSelectedCategory,
+    setSidebarOpen,
+    setIsAuthOpen,
+  });
 
   // --- Effects ---
 
@@ -588,88 +399,7 @@ function App() {
         
         // 如果从KV空间加载搜索配置失败，直接使用默认配置（不使用localStorage回退）
         setSearchMode('internal');
-        setExternalSearchSources([
-            {
-                id: 'bing',
-                name: '必应',
-                url: 'https://www.bing.com/search?q={query}',
-                icon: 'Search',
-                enabled: true,
-                createdAt: Date.now()
-            },
-            {
-                id: 'google',
-                name: 'Google',
-                url: 'https://www.google.com/search?q={query}',
-                icon: 'Search',
-                enabled: true,
-                createdAt: Date.now()
-            },
-            {
-                id: 'baidu',
-                name: '百度',
-                url: 'https://www.baidu.com/s?wd={query}',
-                icon: 'Globe',
-                enabled: true,
-                createdAt: Date.now()
-            },
-            {
-                id: 'sogou',
-                name: '搜狗',
-                url: 'https://www.sogou.com/web?query={query}',
-                icon: 'Globe',
-                enabled: true,
-                createdAt: Date.now()
-            },
-            {
-                id: 'yandex',
-                name: 'Yandex',
-                url: 'https://yandex.com/search/?text={query}',
-                icon: 'Globe',
-                enabled: true,
-                createdAt: Date.now()
-            },
-            {
-                id: 'github',
-                name: 'GitHub',
-                url: 'https://github.com/search?q={query}',
-                icon: 'Github',
-                enabled: true,
-                createdAt: Date.now()
-            },
-            {
-                id: 'linuxdo',
-                name: 'Linux.do',
-                url: 'https://linux.do/search?q={query}',
-                icon: 'Terminal',
-                enabled: true,
-                createdAt: Date.now()
-            },
-            {
-                id: 'bilibili',
-                name: 'B站',
-                url: 'https://search.bilibili.com/all?keyword={query}',
-                icon: 'Play',
-                enabled: true,
-                createdAt: Date.now()
-            },
-            {
-                id: 'youtube',
-                name: 'YouTube',
-                url: 'https://www.youtube.com/results?search_query={query}',
-                icon: 'Video',
-                enabled: true,
-                createdAt: Date.now()
-            },
-            {
-                id: 'wikipedia',
-                name: '维基',
-                url: 'https://zh.wikipedia.org/wiki/Special:Search?search={query}',
-                icon: 'BookOpen',
-                enabled: true,
-                createdAt: Date.now()
-            }
-        ]);
+        setExternalSearchSources(createDefaultSearchSources());
         
         setIsLoadingSearchConfig(false);
         setIsCheckingAuth(false);
@@ -677,72 +407,6 @@ function App() {
 
     initData();
   }, []);
-
-  // --- Batch Edit Functions ---
-  const toggleBatchEditMode = () => {
-    if (!requireAuth()) return;
-    setIsBatchEditMode(!isBatchEditMode);
-    setSelectedLinks(new Set()); // 退出批量编辑模式时清空选中项
-  };
-
-  const toggleLinkSelection = (linkId: string) => {
-    setSelectedLinks(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(linkId)) {
-        newSet.delete(linkId);
-      } else {
-        newSet.add(linkId);
-      }
-      return newSet;
-    });
-  };
-
-  const handleBatchDelete = () => {
-    if (!authToken) { setIsAuthOpen(true); return; }
-    
-    if (selectedLinks.size === 0) {
-      showToast('请先选择要删除的链接', 'warning');
-      return;
-    }
-    
-    if (confirm(`确定要删除选中的 ${selectedLinks.size} 个链接吗？`)) {
-      const newLinks = links.filter(link => !selectedLinks.has(link.id));
-      updateData(newLinks, categories);
-      setSelectedLinks(new Set());
-      setIsBatchEditMode(false);
-    }
-  };
-
-  const handleBatchMove = (targetCategoryId: string) => {
-    if (!authToken) { setIsAuthOpen(true); return; }
-    
-    if (selectedLinks.size === 0) {
-      showToast('请先选择要移动的链接', 'warning');
-      return;
-    }
-    
-    const newLinks = links.map(link => 
-      selectedLinks.has(link.id) ? { ...link, categoryId: targetCategoryId } : link
-    );
-    updateData(newLinks, categories);
-    setSelectedLinks(new Set());
-    setIsBatchEditMode(false);
-  };
-
-  const handleSelectAll = () => {
-    // 获取当前显示的所有链接ID
-    const currentLinkIds = displayedLinks.map(link => link.id);
-    
-    // 如果已选中的链接数量等于当前显示的链接数量，则取消全选
-    if (selectedLinks.size === currentLinkIds.length && currentLinkIds.every(id => selectedLinks.has(id))) {
-      setSelectedLinks(new Set());
-    } else {
-      // 否则全选当前显示的所有链接
-      setSelectedLinks(new Set(currentLinkIds));
-    }
-  };
-
-  // --- Actions ---
 
   const handleLogin = async (password: string): Promise<boolean> => {
       try {
@@ -887,45 +551,6 @@ function App() {
       loadFromLocal();
   };
 
-  // 分类操作密码验证处理函数
-  const handleCategoryActionAuth = async (password: string): Promise<boolean> => {
-    try {
-      // 验证密码
-      const authResponse = await fetch('/api/storage', {
-        method: 'POST',
-        headers: buildAuthHeaders(password, {
-          'Content-Type': 'application/json',
-        }),
-        body: JSON.stringify({ authOnly: true })
-      });
-      
-      return authResponse.ok;
-    } catch (error) {
-      console.error('Category action auth error:', error);
-      return false;
-    }
-  };
-
-  // 打开分类操作验证弹窗
-  const openCategoryActionAuth = (action: 'edit' | 'delete', categoryId: string, categoryName: string) => {
-    setCategoryActionAuth({
-      isOpen: true,
-      action,
-      categoryId,
-      categoryName
-    });
-  };
-
-  // 关闭分类操作验证弹窗
-  const closeCategoryActionAuth = () => {
-    setCategoryActionAuth({
-      isOpen: false,
-      action: 'edit',
-      categoryId: '',
-      categoryName: ''
-    });
-  };
-
   const handleImportConfirm = (newLinks: LinkItem[], newCategories: Category[]) => {
       // Merge categories: Avoid duplicate names/IDs
       const mergedCategories = [...categories];
@@ -945,245 +570,6 @@ function App() {
       updateData(mergedLinks, mergedCategories);
       setIsImportModalOpen(false);
       showToast(`成功导入 ${newLinks.length} 个新书签`, 'success');
-  };
-
-  const handleAddLink = (data: Omit<LinkItem, 'id' | 'createdAt'>) => {
-    if (!authToken) { setIsAuthOpen(true); return; }
-    
-    // 处理URL，确保有协议前缀
-    let processedUrl = data.url;
-    if (processedUrl && !processedUrl.startsWith('http://') && !processedUrl.startsWith('https://')) {
-      processedUrl = 'https://' + processedUrl;
-    }
-    
-    // 获取当前分类下的所有链接（不包括置顶链接）
-    const categoryLinks = links.filter(link => 
-      !link.pinned && (data.categoryId === 'all' || link.categoryId === data.categoryId)
-    );
-    
-    // 计算新链接的order值，使其排在分类最后
-    const maxOrder = categoryLinks.length > 0 
-      ? Math.max(...categoryLinks.map(link => link.order || 0))
-      : -1;
-    
-    const newLink: LinkItem = {
-      ...data,
-      url: processedUrl, // 使用处理后的URL
-      id: Date.now().toString(),
-      createdAt: Date.now(),
-      order: maxOrder + 1, // 设置为当前分类的最大order值+1，确保排在最后
-      // 如果是置顶链接，设置pinnedOrder为当前置顶链接数量
-      pinnedOrder: data.pinned ? links.filter(l => l.pinned).length : undefined
-    };
-    
-    // 将新链接插入到合适的位置，而不是直接放在开头
-    // 如果是置顶链接，放在置顶链接区域的最后
-    if (newLink.pinned) {
-      const firstNonPinnedIndex = links.findIndex(link => !link.pinned);
-      if (firstNonPinnedIndex === -1) {
-        // 如果没有非置顶链接，直接添加到末尾
-        updateData([...links, newLink], categories);
-      } else {
-        // 插入到非置顶链接之前
-        const updatedLinks = [...links];
-        updatedLinks.splice(firstNonPinnedIndex, 0, newLink);
-        updateData(updatedLinks, categories);
-      }
-    } else {
-      // 非置顶链接，按照order字段排序后插入
-      const updatedLinks = [...links, newLink].sort((a, b) => {
-        // 置顶链接始终排在前面
-        if (a.pinned && !b.pinned) return -1;
-        if (!a.pinned && b.pinned) return 1;
-        
-        // 同类型链接按照order排序
-        const aOrder = a.order !== undefined ? a.order : a.createdAt;
-        const bOrder = b.order !== undefined ? b.order : b.createdAt;
-        return aOrder - bOrder;
-      });
-      updateData(updatedLinks, categories);
-    }
-    
-    // Clear prefill if any
-    setPrefillLink(undefined);
-  };
-
-  const handleEditLink = (data: Omit<LinkItem, 'id' | 'createdAt'>) => {
-    if (!authToken) { setIsAuthOpen(true); return; }
-    if (!editingLink) return;
-    
-    // 处理URL，确保有协议前缀
-    let processedUrl = data.url;
-    if (processedUrl && !processedUrl.startsWith('http://') && !processedUrl.startsWith('https://')) {
-      processedUrl = 'https://' + processedUrl;
-    }
-    
-    const updated = links.map(l => l.id === editingLink.id ? { ...l, ...data, url: processedUrl } : l);
-    updateData(updated, categories);
-    setEditingLink(undefined);
-  };
-
-  // 拖拽结束事件处理函数
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-
-    if (over && active.id !== over.id) {
-      // 获取当前分类下的所有链接
-      const categoryLinks = links.filter(link => 
-        selectedCategory === 'all' || link.categoryId === selectedCategory
-      );
-      
-      // 找到被拖拽元素和目标元素的索引
-      const activeIndex = categoryLinks.findIndex(link => link.id === active.id);
-      const overIndex = categoryLinks.findIndex(link => link.id === over.id);
-      
-      if (activeIndex !== -1 && overIndex !== -1) {
-        // 重新排序当前分类的链接
-        const reorderedCategoryLinks = arrayMove<LinkItem>(categoryLinks, activeIndex, overIndex);
-        
-        // 更新所有链接的顺序
-        const updatedLinks = links.map(link => {
-          const reorderedIndex = reorderedCategoryLinks.findIndex(l => l.id === link.id);
-          if (reorderedIndex !== -1) {
-            return { ...link, order: reorderedIndex };
-          }
-          return link;
-        });
-        
-        // 按照order字段重新排序
-        updatedLinks.sort((a, b) => (a.order || 0) - (b.order || 0));
-        
-        updateData(updatedLinks, categories);
-      }
-    }
-  };
-
-  // 置顶链接拖拽结束事件处理函数
-  const handlePinnedDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-
-    if (over && active.id !== over.id) {
-      // 获取所有置顶链接
-      const pinnedLinksList = links.filter(link => link.pinned);
-      
-      // 找到被拖拽元素和目标元素的索引
-      const activeIndex = pinnedLinksList.findIndex(link => link.id === active.id);
-      const overIndex = pinnedLinksList.findIndex(link => link.id === over.id);
-      
-      if (activeIndex !== -1 && overIndex !== -1) {
-        // 重新排序置顶链接
-        const reorderedPinnedLinks = arrayMove<LinkItem>(pinnedLinksList, activeIndex, overIndex);
-        
-        // 创建一个映射，存储每个置顶链接的新pinnedOrder
-        const pinnedOrderMap = new Map<string, number>();
-        reorderedPinnedLinks.forEach((link, index) => {
-          pinnedOrderMap.set(link.id, index);
-        });
-        
-        // 只更新置顶链接的pinnedOrder，不改变任何链接的顺序
-        const updatedLinks = links.map(link => {
-          if (link.pinned) {
-            return { 
-              ...link, 
-              pinnedOrder: pinnedOrderMap.get(link.id) 
-            };
-          }
-          return link;
-        });
-        
-        // 按照pinnedOrder重新排序整个链接数组，确保置顶链接的顺序正确
-        // 同时保持非置顶链接的相对顺序不变
-        updatedLinks.sort((a, b) => {
-          // 如果都是置顶链接，按照pinnedOrder排序
-          if (a.pinned && b.pinned) {
-            return (a.pinnedOrder || 0) - (b.pinnedOrder || 0);
-          }
-          // 如果只有一个是置顶链接，置顶链接排在前面
-          if (a.pinned) return -1;
-          if (b.pinned) return 1;
-          // 如果都不是置顶链接，保持原位置不变（按照order或createdAt排序）
-          const aOrder = a.order !== undefined ? a.order : a.createdAt;
-          const bOrder = b.order !== undefined ? b.order : b.createdAt;
-          return bOrder - aOrder;
-        });
-        
-        updateData(updatedLinks, categories);
-      }
-    }
-  };
-
-  // 开始排序
-  const startSorting = (categoryId: string) => {
-    if (!requireAuth()) return;
-    setIsSortingMode(categoryId);
-  };
-
-  // 保存排序
-  const saveSorting = () => {
-    // 在保存排序时，确保将当前排序后的数据保存到服务器和本地存储
-    updateData(links, categories);
-    setIsSortingMode(null);
-  };
-
-  // 取消排序
-  const cancelSorting = () => {
-    setIsSortingMode(null);
-  };
-
-  // 保存置顶链接排序
-  const savePinnedSorting = () => {
-    // 在保存排序时，确保将当前排序后的数据保存到服务器和本地存储
-    updateData(links, categories);
-    setIsSortingPinned(false);
-  };
-
-  // 取消置顶链接排序
-  const cancelPinnedSorting = () => {
-    setIsSortingPinned(false);
-  };
-
-  // 设置dnd-kit的传感器
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 8, // 需要拖动8px才开始拖拽，避免误触
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  );
-
-  const handleDeleteLink = (id: string) => {
-    if (!authToken) { setIsAuthOpen(true); return; }
-    if (confirm('确定删除此链接吗?')) {
-      updateData(links.filter(l => l.id !== id), categories);
-    }
-  };
-
-  const togglePin = (id: string, e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (!authToken) { setIsAuthOpen(true); return; }
-      
-      const linkToToggle = links.find(l => l.id === id);
-      if (!linkToToggle) return;
-      
-      // 如果是设置为置顶，则设置pinnedOrder为当前置顶链接数量
-      // 如果是取消置顶，则清除pinnedOrder
-      const updated = links.map(l => {
-        if (l.id === id) {
-          const isPinned = !l.pinned;
-          return { 
-            ...l, 
-            pinned: isPinned,
-            pinnedOrder: isPinned ? links.filter(link => link.pinned).length : undefined
-          };
-        }
-        return l;
-      });
-      
-      updateData(updated, categories);
   };
 
   const handleSaveAIConfig = async (config: AIConfig, newSiteSettings?: any) => {
@@ -1265,62 +651,6 @@ function App() {
       }
   };
 
-  // --- Category Management & Security ---
-
-  const handleCategoryClick = (cat: Category) => {
-      if (cat.requireAuth && !authToken) {
-          setPendingProtectedCategoryId(cat.id);
-          setIsAuthOpen(true);
-          setSidebarOpen(false);
-          return;
-      }
-
-      // If category has password and is NOT unlocked
-      if (cat.password && !unlockedCategoryIds.has(cat.id)) {
-          setCatAuthModalData(cat);
-          setSidebarOpen(false);
-          return;
-      }
-      setSelectedCategory(cat.id);
-      setSidebarOpen(false);
-  };
-
-  const handleUnlockCategory = (catId: string) => {
-      setUnlockedCategoryIds(prev => new Set(prev).add(catId));
-      setSelectedCategory(catId);
-  };
-
-  const handleUpdateCategories = (newCats: Category[]) => {
-      if (!authToken) { setIsAuthOpen(true); return; }
-      updateData(links, newCats);
-  };
-
-  const handleDeleteCategory = (catId: string) => {
-      if (!authToken) { setIsAuthOpen(true); return; }
-      
-      // 防止删除"常用推荐"分类
-      if (catId === 'common') {
-          showToast('常用推荐分类不能被删除', 'warning');
-          return;
-      }
-      
-      let newCats = categories.filter(c => c.id !== catId);
-      
-      // 检查是否存在"常用推荐"分类，如果不存在则创建它
-      if (!newCats.some(c => c.id === 'common')) {
-          newCats = [
-              { id: 'common', name: '常用推荐', icon: 'Star' },
-              ...newCats
-          ];
-      }
-      
-      // Move links to common or first available
-      const targetId = 'common'; 
-      const newLinks = links.map(l => l.categoryId === catId ? { ...l, categoryId: targetId } : l);
-      
-      updateData(newLinks, newCats);
-  };
-
   // --- WebDAV Config ---
   const handleSaveWebDavConfig = (config: WebDavConfig) => {
       setWebDavConfig(config);
@@ -1346,315 +676,7 @@ function App() {
       handleSaveWebDavConfig(config);
   };
 
-  // 搜索源选择弹出窗口状态
-  const [showSearchSourcePopup, setShowSearchSourcePopup] = useState(false);
-  const [hoveredSearchSource, setHoveredSearchSource] = useState<ExternalSearchSource | null>(null);
-  const [selectedSearchSource, setSelectedSearchSource] = useState<ExternalSearchSource | null>(null);
-  const [isIconHovered, setIsIconHovered] = useState(false);
-  const [isPopupHovered, setIsPopupHovered] = useState(false);
-  const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  // 处理弹出窗口显示/隐藏逻辑
-  useEffect(() => {
-    if (isIconHovered || isPopupHovered) {
-      // 如果图标或弹出窗口被悬停，清除隐藏定时器并显示弹出窗口
-      if (hideTimeoutRef.current) {
-        clearTimeout(hideTimeoutRef.current);
-        hideTimeoutRef.current = null;
-      }
-      setShowSearchSourcePopup(true);
-    } else {
-      // 如果图标和弹出窗口都没有被悬停，设置一个延迟隐藏弹出窗口
-      if (hideTimeoutRef.current) {
-        clearTimeout(hideTimeoutRef.current);
-      }
-      hideTimeoutRef.current = setTimeout(() => {
-        setShowSearchSourcePopup(false);
-        setHoveredSearchSource(null);
-      }, 100);
-    }
-    
-    // 清理函数
-    return () => {
-      if (hideTimeoutRef.current) {
-        clearTimeout(hideTimeoutRef.current);
-      }
-    };
-  }, [isIconHovered, isPopupHovered]);
-
-  // 处理搜索源选择
-  const handleSearchSourceSelect = async (source: ExternalSearchSource) => {
-    // 更新选中的搜索源
-    setSelectedSearchSource(source);
-    
-    // 保存选中的搜索源到KV空间
-    await handleSaveSearchConfig(externalSearchSources, searchMode, source);
-    
-    if (searchQuery.trim()) {
-      const searchUrl = source.url.replace('{query}', encodeURIComponent(searchQuery));
-      window.open(searchUrl, '_blank');
-    }
-    setShowSearchSourcePopup(false);
-    setHoveredSearchSource(null);
-  };
-
-  // --- Search Config ---
-  const handleSaveSearchConfig = async (sources: ExternalSearchSource[], mode: SearchMode, selectedSource?: ExternalSearchSource | null, persistToCloud: boolean = true) => {
-      const searchConfig: SearchConfig = {
-          mode,
-          externalSources: sources,
-          selectedSource: selectedSource !== undefined ? selectedSource : selectedSearchSource
-      };
-      
-      setExternalSearchSources(sources);
-      setSearchMode(mode);
-      if (selectedSource !== undefined) {
-          setSelectedSearchSource(selectedSource);
-      }
-      
-      // 只保存到KV空间（搜索配置允许无密码访问）
-      if (!persistToCloud || !authToken) {
-          return;
-      }
-
-      try {
-          const response = await fetch('/api/storage', {
-              method: 'POST',
-              headers: buildAuthHeaders(authToken, {
-                  'Content-Type': 'application/json'
-              }),
-              body: JSON.stringify({
-                  saveConfig: 'search',
-                  config: searchConfig
-              })
-          });
-          
-          if (!response.ok) {
-              console.error('Failed to save search config to KV:', response.statusText);
-          }
-      } catch (error) {
-          console.error('Error saving search config to KV:', error);
-      }
-  };
-
-  const openSearchConfigModal = () => {
-      if (!requireAuth()) return;
-      setIsSearchConfigModalOpen(true);
-  };
-
-  const handleSearchConfigModalSave = async (sources: ExternalSearchSource[]) => {
-      if (!requireAuth()) return;
-      await handleSaveSearchConfig(sources, searchMode, undefined, true);
-  };
-
-  const handleSearchModeChange = (mode: SearchMode) => {
-      setSearchMode(mode);
-      
-      // 如果切换到外部搜索模式且搜索源列表为空，自动加载默认搜索源
-      if (mode === 'external' && externalSearchSources.length === 0) {
-          const defaultSources: ExternalSearchSource[] = [
-              {
-                  id: 'bing',
-                  name: '必应',
-                  url: 'https://www.bing.com/search?q={query}',
-                  icon: 'Search',
-                  enabled: true,
-                  createdAt: Date.now()
-              },
-              {
-                  id: 'google',
-                  name: 'Google',
-                  url: 'https://www.google.com/search?q={query}',
-                  icon: 'Search',
-                  enabled: true,
-                  createdAt: Date.now()
-              },
-              {
-                  id: 'baidu',
-                  name: '百度',
-                  url: 'https://www.baidu.com/s?wd={query}',
-                  icon: 'Globe',
-                  enabled: true,
-                  createdAt: Date.now()
-              },
-              {
-                  id: 'sogou',
-                  name: '搜狗',
-                  url: 'https://www.sogou.com/web?query={query}',
-                  icon: 'Globe',
-                  enabled: true,
-                  createdAt: Date.now()
-              },
-              {
-                  id: 'yandex',
-                  name: 'Yandex',
-                  url: 'https://yandex.com/search/?text={query}',
-                  icon: 'Globe',
-                  enabled: true,
-                  createdAt: Date.now()
-              },
-              {
-                  id: 'github',
-                  name: 'GitHub',
-                  url: 'https://github.com/search?q={query}',
-                  icon: 'Github',
-                  enabled: true,
-                  createdAt: Date.now()
-              },
-              {
-                  id: 'linuxdo',
-                  name: 'Linux.do',
-                  url: 'https://linux.do/search?q={query}',
-                  icon: 'Terminal',
-                  enabled: true,
-                  createdAt: Date.now()
-              },
-              {
-                  id: 'bilibili',
-                  name: 'B站',
-                  url: 'https://search.bilibili.com/all?keyword={query}',
-                  icon: 'Play',
-                  enabled: true,
-                  createdAt: Date.now()
-              },
-              {
-                  id: 'youtube',
-                  name: 'YouTube',
-                  url: 'https://www.youtube.com/results?search_query={query}',
-                  icon: 'Video',
-                  enabled: true,
-                  createdAt: Date.now()
-              },
-              {
-                  id: 'wikipedia',
-                  name: '维基',
-                  url: 'https://zh.wikipedia.org/wiki/Special:Search?search={query}',
-                  icon: 'BookOpen',
-                  enabled: true,
-                  createdAt: Date.now()
-              }
-          ];
-          
-          // 保存默认搜索源到状态和KV空间
-          handleSaveSearchConfig(defaultSources, mode);
-      } else {
-          handleSaveSearchConfig(externalSearchSources, mode);
-      }
-  };
-
-  const handleExternalSearch = () => {
-      if (searchQuery.trim() && searchMode === 'external') {
-          // 如果搜索源列表为空，自动加载默认搜索源
-          if (externalSearchSources.length === 0) {
-              const defaultSources: ExternalSearchSource[] = [
-                  {
-                      id: 'bing',
-                      name: '必应',
-                      url: 'https://www.bing.com/search?q={query}',
-                      icon: 'Search',
-                      enabled: true,
-                      createdAt: Date.now()
-                  },
-                  {
-                      id: 'google',
-                      name: 'Google',
-                      url: 'https://www.google.com/search?q={query}',
-                      icon: 'Search',
-                      enabled: true,
-                      createdAt: Date.now()
-                  },
-                  {
-                      id: 'baidu',
-                      name: '百度',
-                      url: 'https://www.baidu.com/s?wd={query}',
-                      icon: 'Globe',
-                      enabled: true,
-                      createdAt: Date.now()
-                  },
-                  {
-                      id: 'sogou',
-                      name: '搜狗',
-                      url: 'https://www.sogou.com/web?query={query}',
-                      icon: 'Globe',
-                      enabled: true,
-                      createdAt: Date.now()
-                  },
-                  {
-                      id: 'yandex',
-                      name: 'Yandex',
-                      url: 'https://yandex.com/search/?text={query}',
-                      icon: 'Globe',
-                      enabled: true,
-                      createdAt: Date.now()
-                  },
-                  {
-                      id: 'github',
-                      name: 'GitHub',
-                      url: 'https://github.com/search?q={query}',
-                      icon: 'Github',
-                      enabled: true,
-                      createdAt: Date.now()
-                  },
-                  {
-                      id: 'linuxdo',
-                      name: 'Linux.do',
-                      url: 'https://linux.do/search?q={query}',
-                      icon: 'Terminal',
-                      enabled: true,
-                      createdAt: Date.now()
-                  },
-                  {
-                      id: 'bilibili',
-                      name: 'B站',
-                      url: 'https://search.bilibili.com/all?keyword={query}',
-                      icon: 'Play',
-                      enabled: true,
-                      createdAt: Date.now()
-                  },
-                  {
-                      id: 'youtube',
-                      name: 'YouTube',
-                      url: 'https://www.youtube.com/results?search_query={query}',
-                      icon: 'Video',
-                      enabled: true,
-                      createdAt: Date.now()
-                  },
-                  {
-                      id: 'wikipedia',
-                      name: '维基',
-                      url: 'https://zh.wikipedia.org/wiki/Special:Search?search={query}',
-                      icon: 'BookOpen',
-                      enabled: true,
-                      createdAt: Date.now()
-                  }
-              ];
-              
-              // 保存默认搜索源到状态和KV空间
-              handleSaveSearchConfig(defaultSources, 'external');
-              
-              // 使用第一个默认搜索源立即执行搜索
-              const searchUrl = defaultSources[0].url.replace('{query}', encodeURIComponent(searchQuery));
-              window.open(searchUrl, '_blank');
-              return;
-          }
-          
-          // 如果有选中的搜索源，使用选中的搜索源；否则使用第一个启用的搜索源
-          let source = selectedSearchSource;
-          if (!source) {
-              const enabledSources = externalSearchSources.filter(s => s.enabled);
-              if (enabledSources.length > 0) {
-                  source = enabledSources[0];
-              }
-          }
-          
-          if (source) {
-              const searchUrl = source.url.replace('{query}', encodeURIComponent(searchQuery));
-              window.open(searchUrl, '_blank');
-          }
-      }
-  };
-
-  const handleRestoreBackup = (restoredLinks: LinkItem[], restoredCategories: Category[]) => {
+ const handleRestoreBackup = (restoredLinks: LinkItem[], restoredCategories: Category[]) => {
       updateData(restoredLinks, restoredCategories);
       setIsBackupModalOpen(false);
   };
@@ -1664,20 +686,6 @@ function App() {
   };
 
   // --- Filtering & Memo ---
-
-  const requiresGlobalCategoryAuth = (catId: string) => {
-      const cat = categories.find(c => c.id === catId);
-      return !!cat?.requireAuth && !authToken;
-  };
-
-  // Helper to check if a category is "Locked"
-  const isCategoryLocked = (catId: string) => {
-      const cat = categories.find(c => c.id === catId);
-      if (!cat) return false;
-      if (cat.requireAuth && !authToken) return true;
-      if (!cat.password) return false;
-      return !unlockedCategoryIds.has(catId);
-  };
 
   const pinnedLinks = useMemo(() => {
       // Don't show pinned links if they belong to a locked category
@@ -1778,189 +786,82 @@ function App() {
   }, [links, selectedCategory, searchQuery, categories, unlockedCategoryIds]);
 
 
+  const {
+    isSortingMode,
+    setIsSortingMode,
+    isSortingPinned,
+    setIsSortingPinned,
+    isBatchEditMode,
+    selectedLinks,
+    toggleBatchEditMode,
+    toggleLinkSelection,
+    handleBatchDelete,
+    handleBatchMove,
+    handleSelectAll,
+    handleAddLink,
+    handleEditLink,
+    handleDragEnd,
+    handlePinnedDragEnd,
+    startSorting,
+    saveSorting,
+    cancelSorting,
+    savePinnedSorting,
+    cancelPinnedSorting,
+    sensors,
+    handleDeleteLink,
+    togglePin,
+    togglePinFromLink,
+  } = useLinkOrganizer({
+    links,
+    categories,
+    selectedCategory,
+    displayedLinks,
+    authToken,
+    requireAuth,
+    updateData,
+    showToast,
+    editingLink,
+    setEditingLink,
+    setPrefillLink,
+    setIsAuthOpen,
+  });
+
+  // --- Context Menu Hook ---
+  const {
+    contextMenu, qrCodeModal,
+    handleContextMenu, closeContextMenu, copyLinkToClipboard,
+    showQRCode, editLinkFromContextMenu, deleteLinkFromContextMenu,
+    togglePinFromContextMenu, closeQrCodeModal,
+  } = useContextMenu({
+    isBatchEditMode,
+    requireAuth,
+    onEditLink: (link) => { setEditingLink(link); setIsModalOpen(true); },
+    onDeleteLink: (linkId) => { const newLinks = links.filter(l => l.id !== linkId); updateData(newLinks, categories); },
+    onTogglePin: togglePinFromLink,
+  });
+
+
+
   // --- Render Components ---
 
-  // 创建可排序的链接卡片组件
-  const SortableLinkCard = ({ link }: { link: LinkItem }) => {
-    const {
-      attributes,
-      listeners,
-      setNodeRef,
-      transform,
-      transition,
-      isDragging,
-    } = useSortable({ id: link.id });
-    
-    // 根据视图模式决定卡片样式
-    const isDetailedView = siteSettings.cardStyle === 'detailed';
-    
-    const style = {
-      transform: CSS.Transform.toString(transform),
-      transition: isDragging ? 'none' : transition,
-      opacity: isDragging ? 0.5 : 1,
-      zIndex: isDragging ? 1000 : 'auto',
-    };
+  const renderLinkCard = (link: LinkItem) => (
+    <LinkCard
+      link={link}
+      isSelected={selectedLinks.has(link.id)}
+      isBatchEditMode={isBatchEditMode}
+      siteSettings={siteSettings}
+      onToggleSelection={toggleLinkSelection}
+      onContextMenu={handleContextMenu}
+      onEdit={(targetLink, event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!requireAuth()) return;
+        setEditingLink(targetLink);
+        setIsModalOpen(true);
+      }}
+    />
+  );
 
-    return (
-      <div
-        ref={setNodeRef}
-        style={style}
-        className={`group relative transition-all duration-200 cursor-grab active:cursor-grabbing min-w-0 max-w-full overflow-hidden hover:shadow-lg hover:shadow-green-100/50 dark:hover:shadow-green-900/20 ${
-          isSortingMode || isSortingPinned
-            ? 'bg-green-20 dark:bg-green-900/30 border-green-200 dark:border-green-800' 
-            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
-        } ${isDragging ? 'shadow-2xl scale-105' : ''} ${
-          isDetailedView 
-            ? 'flex flex-col rounded-2xl border shadow-sm p-4 min-h-[100px] hover:border-green-400 dark:hover:border-green-500' 
-            : 'flex items-center rounded-xl border shadow-sm hover:border-green-300 dark:hover:border-green-600'
-        }`}
-        {...attributes}
-        {...listeners}
-      >
-        {/* 链接内容 - 移除a标签，改为div防止点击跳转 */}
-        <div className={`flex flex-1 min-w-0 overflow-hidden ${
-          isDetailedView ? 'flex-col' : 'items-center gap-3'
-        }`}>
-          {/* 第一行：图标和标题水平排列 */}
-          <div className={`flex items-center gap-3 mb-2 ${
-            isDetailedView ? '' : 'w-full'
-          }`}>
-            {/* Icon */}
-            <div className={`text-blue-600 dark:text-blue-400 flex items-center justify-center text-sm font-bold uppercase shrink-0 ${
-              isDetailedView ? 'w-8 h-8 rounded-xl bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-700 dark:to-slate-800' : 'w-8 h-8 rounded-lg bg-slate-50 dark:bg-slate-700'
-            }`}>
-                {link.icon ? <img src={link.icon} alt="" className="w-5 h-5"/> : link.title.charAt(0)}
-            </div>
-            
-            {/* 标题 */}
-            <h3 className={`text-slate-900 dark:text-slate-100 truncate overflow-hidden text-ellipsis ${
-              isDetailedView ? 'text-base' : 'text-sm font-medium text-slate-800 dark:text-slate-200'
-            }`} title={link.title}>
-                {link.title}
-            </h3>
-          </div>
-          
-          {/* 第二行：描述文字 */}
-             {isDetailedView && link.description && (
-               <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed line-clamp-2">
-                 {link.description}
-               </p>
-             )}
-        </div>
-      </div>
-    );
-  };
-
-  const renderLinkCard = (link: LinkItem) => {
-    const isSelected = selectedLinks.has(link.id);
-    
-    // 根据视图模式决定卡片样式
-    const isDetailedView = siteSettings.cardStyle === 'detailed';
-    
-    return (
-      <div
-        key={link.id}
-        className={`group relative transition-all duration-200 hover:shadow-lg hover:shadow-blue-100/50 dark:hover:shadow-blue-900/20 ${
-          isSelected 
-            ? 'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800' 
-            : 'bg-white dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 border-slate-200 dark:border-slate-700'
-        } ${isBatchEditMode ? 'cursor-pointer' : ''} ${
-          isDetailedView 
-            ? 'flex flex-col rounded-2xl border shadow-sm p-4 min-h-[100px] hover:border-blue-400 dark:hover:border-blue-500' 
-            : 'flex items-center justify-between rounded-xl border shadow-sm p-3 hover:border-blue-300 dark:hover:border-blue-600'
-        }`}
-        onClick={() => isBatchEditMode && toggleLinkSelection(link.id)}
-        onContextMenu={(e) => handleContextMenu(e, link)}
-      >
-        {/* 链接内容 - 在批量编辑模式下不使用a标签 */}
-        {isBatchEditMode ? (
-          <div className={`flex flex-1 min-w-0 overflow-hidden h-full ${
-            isDetailedView ? 'flex-col' : 'items-center'
-          }`}>
-            {/* 第一行：图标和标题水平排列 */}
-            <div className={`flex items-center gap-3 w-full`}>
-              {/* Icon */}
-              <div className={`text-blue-600 dark:text-blue-400 flex items-center justify-center text-sm font-bold uppercase shrink-0 ${
-                isDetailedView ? 'w-8 h-8 rounded-xl bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-700 dark:to-slate-800' : 'w-8 h-8 rounded-lg bg-slate-50 dark:bg-slate-700'
-              }`}>
-                  {link.icon ? <img src={link.icon} alt="" className="w-5 h-5"/> : link.title.charAt(0)}
-              </div>
-              
-              {/* 标题 */}
-              <h3 className={`text-slate-900 dark:text-slate-100 truncate overflow-hidden text-ellipsis ${
-                isDetailedView ? 'text-base' : 'text-sm font-medium text-slate-800 dark:text-slate-200'
-              }`} title={link.title}>
-                  {link.title}
-              </h3>
-            </div>
-            
-            {/* 第二行：描述文字 */}
-            {isDetailedView && link.description && (
-              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed line-clamp-2">
-                {link.description}
-              </p>
-            )}
-          </div>
-        ) : (
-          <a
-            href={link.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`flex flex-1 min-w-0 overflow-hidden h-full ${
-              isDetailedView ? 'flex-col' : 'items-center'
-            }`}
-            title={isDetailedView ? link.url : (link.description || link.url)} // 详情版视图只显示URL作为tooltip
-          >
-            {/* 第一行：图标和标题水平排列 */}
-            <div className={`flex items-center gap-3 w-full`}>
-              {/* Icon */}
-              <div className={`text-blue-600 dark:text-blue-400 flex items-center justify-center text-sm font-bold uppercase shrink-0 ${
-                isDetailedView ? 'w-8 h-8 rounded-xl bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-700 dark:to-slate-800' : 'w-8 h-8 rounded-lg bg-slate-50 dark:bg-slate-700'
-              }`}>
-                  {link.icon ? <img src={link.icon} alt="" className="w-5 h-5"/> : link.title.charAt(0)}
-              </div>
-              
-              {/* 标题 */}
-                <h3 className={`text-slate-800 dark:text-slate-200 truncate whitespace-nowrap overflow-hidden text-ellipsis group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors ${
-                  isDetailedView ? 'text-base' : 'text-sm font-medium'
-                }`} title={link.title}>
-                    {link.title}
-                </h3>
-            </div>
-            
-            {/* 第二行：描述文字 */}
-              {isDetailedView && link.description && (
-                <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed line-clamp-2">
-                  {link.description}
-                </p>
-              )}
-            {!isDetailedView && link.description && (
-              <div className="tooltip-custom absolute left-0 -top-8 w-max max-w-[200px] bg-black text-white text-xs p-2 rounded opacity-0 invisible group-hover:visible group-hover:opacity-100 transition-all z-20 pointer-events-none truncate">
-                {link.description}
-              </div>
-            )}
-          </a>
-        )}
-
-        {/* Hover Actions (Absolute Right) - 在批量编辑模式下隐藏 */}
-        {!isBatchEditMode && (
-          <div className={`flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-blue-50 dark:bg-blue-900/20 backdrop-blur-sm rounded-md p-1 absolute ${
-            isDetailedView ? 'top-3 right-3' : 'top-1/2 -translate-y-1/2 right-2'
-          }`}>
-              <button 
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); if(!requireAuth()) return; setEditingLink(link); setIsModalOpen(true); }}
-                  className="p-1 text-slate-400 hover:text-blue-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md"
-                  title="编辑"
-              >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M12 15.5A3.5 3.5 0 0 1 8.5 12A3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5a3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97c0-.33-.03-.65-.07-.97l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.39-1.06-.73-1.69-.98l-.37-2.65A.506.506 0 0 0 14 2h-4c-.25 0-.46.18-.5.42l-.37 2.65c-.63.25-1.17.59-1.69.98l-2.49-1c-.22-.08-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64L4.57 11c-.04.32-.07.64-.07.97c0 .33.03.65.07.97l-2.11 1.63c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.39 1.06.73 1.69.98l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.63-.25 1.17-.59 1.69-.98l2.49 1c.22.08.49 0 .61-.22l2-3.46c.13-.22.07-.49-.12-.64l-2.11-1.63Z" fill="currentColor"/>
-                  </svg>
-              </button>
-          </div>
-        )}
-      </div>
-    );
-  };
 
   if (isCheckingAuth && requiresAuth === null) {
     return (
