@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Sparkles, Loader2, Pin, Wand2, Trash2 } from 'lucide-react';
 import { LinkItem, Category, AIConfig } from '../types';
+import { NotifyHandler } from '../hooks/useToast';
 
 interface LinkModalProps {
   isOpen: boolean;
@@ -11,9 +12,10 @@ interface LinkModalProps {
   initialData?: LinkItem;
   aiConfig: AIConfig;
   defaultCategoryId?: string;
+  onNotify?: NotifyHandler;
 }
 
-const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete, categories, initialData, aiConfig, defaultCategoryId }) => {
+const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete, categories, initialData, aiConfig, defaultCategoryId, onNotify }) => {
   const [title, setTitle] = useState('');
   const [url, setUrl] = useState('');
   const [description, setDescription] = useState('');
@@ -193,7 +195,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
   const handleAIAssist = async () => {
     if (!url || !title) return;
     if (!aiConfig.apiKey) {
-        alert("请先点击侧边栏左下角设置图标配置 AI API Key");
+        onNotify?.("请先点击侧边栏左下角设置图标配置 AI API Key", 'warning');
         return;
     }
 
@@ -312,7 +314,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
       }
     } catch (e) {
       console.error("Failed to fetch icon", e);
-      alert("无法获取图标，请检查URL是否正确");
+      onNotify?.("无法获取图标，请检查 URL 是否正确", 'error');
     } finally {
       setIsFetchingIcon(false);
     }

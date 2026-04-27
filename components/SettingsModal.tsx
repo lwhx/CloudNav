@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Bot, Key, Globe, Sparkles, PauseCircle, Wrench, Box, Copy, Check, LayoutTemplate, Info, Download, Sidebar, Keyboard, MousePointerClick, AlertTriangle, Package, Zap, Menu, Upload } from 'lucide-react';
 import { AIConfig, LinkItem, Category, SiteSettings } from '../types';
 import JSZip from 'jszip';
+import { NotifyHandler } from '../hooks/useToast';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -13,11 +14,12 @@ interface SettingsModalProps {
   categories: Category[];
   onUpdateLinks: (links: LinkItem[]) => void;
   authToken: string | null;
+  onNotify?: NotifyHandler;
 }
 
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ 
-    isOpen, onClose, config, siteSettings, onSave, links, categories, onUpdateLinks, authToken 
+    isOpen, onClose, config, siteSettings, onSave, links, categories, onUpdateLinks, authToken, onNotify 
 }) => {
   const [activeTab, setActiveTab] = useState<'site' | 'ai' | 'tools'>('site');
   const [localConfig, setLocalConfig] = useState<AIConfig>(config);
@@ -115,13 +117,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleBulkGenerate = async () => {
     if (!localConfig.apiKey) {
-        alert("请先配置并保存 API Key");
+        onNotify?.("请先配置并保存 API Key", 'warning');
         return;
     }
 
     const missingLinks = links.filter(l => !l.description);
     if (missingLinks.length === 0) {
-        alert("所有链接都已有描述！");
+        onNotify?.("所有链接都已有描述", 'info');
         return;
     }
 
@@ -164,7 +166,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       if (!file) return;
 
       if (!file.type.startsWith('image/')) {
-          alert('请上传图片文件');
+          onNotify?.('请上传图片文件', 'warning');
           e.target.value = '';
           return;
       }
@@ -1067,7 +1069,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const handleDownloadIcon = async () => {
     const blob = await generateIconBlob();
     if (!blob) {
-        alert("生成图片失败 (可能是跨域限制)。\n\n请尝试右键点击下方的预览图片，选择 '图片另存为...' 保存。");
+        onNotify?.("生成图片失败，可能是跨域限制。请尝试右键点击下方的预览图片，选择图片另存为保存。", 'error');
         return;
     }
     const url = window.URL.createObjectURL(blob);
@@ -1112,7 +1114,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         
     } catch(e) {
         console.error(e);
-        alert("打包下载失败");
+        onNotify?.("打包下载失败", 'error');
     } finally {
         setIsZipping(false);
     }

@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { X, Upload, FileText, ArrowRight, Check, AlertCircle, FolderInput, ListTree, Database } from 'lucide-react';
 import { Category, LinkItem, SearchConfig, AIConfig, WebDavConfig } from '../types';
 import { parseBookmarks } from '../services/bookmarkParser';
+import { NotifyHandler } from '../hooks/useToast';
 
 interface ImportModalProps {
   isOpen: boolean;
@@ -12,6 +13,7 @@ interface ImportModalProps {
   onImportSearchConfig?: (searchConfig: SearchConfig) => void;
   onImportAIConfig?: (aiConfig: AIConfig) => void;
   onImportWebDavConfig?: (webDavConfig: WebDavConfig) => void;
+  onNotify?: NotifyHandler;
 }
 
 const ImportModal: React.FC<ImportModalProps> = ({ 
@@ -22,7 +24,8 @@ const ImportModal: React.FC<ImportModalProps> = ({
   onImport,
   onImportSearchConfig,
   onImportAIConfig,
-  onImportWebDavConfig
+  onImportWebDavConfig,
+  onNotify
 }) => {
   const [step, setStep] = useState<'upload' | 'preview'>('upload');
   const [file, setFile] = useState<File | null>(null);
@@ -140,7 +143,7 @@ const ImportModal: React.FC<ImportModalProps> = ({
         const errorMessage = type === 'html' 
             ? "解析文件失败，请确保是标准的 Chrome HTML 书签文件。"
             : "解析文件失败，请确保是有效的 cloudnav_backup.json 文件。";
-        alert(errorMessage);
+        onNotify?.(errorMessage, 'error');
         console.error(error);
     } finally {
         setAnalyzing(false);
