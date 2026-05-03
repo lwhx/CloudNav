@@ -1,35 +1,17 @@
+import { WebDavConfig } from '../../types';
+import { buildRateLimitResponse, Env, getCorsHeaders, isRateLimited, validateAuth } from './storage-shared';
 
-interface Env {
-  CLOUDNAV_KV: any;
-  PASSWORD: string;
+type WebDavOperation = 'check' | 'upload' | 'download';
+
+interface WebDavProxyRequest {
+  operation?: WebDavOperation;
+  config?: WebDavConfig;
+  payload?: unknown;
+  filename?: string;
 }
 
-interface WebsiteConfig {
-  passwordExpiryDays?: number;
-}
-
-const AUTH_TIME_HEADER = 'x-auth-issued-at';
-
-const getCorsHeaders = (request: Request) => {
-  const requestUrl = new URL(request.url);
-  const origin = request.headers.get('Origin');
-  const allowOrigin = origin && (
-    origin === requestUrl.origin ||
-    origin.startsWith('chrome-extension://') ||
-    origin.startsWith('moz-extension://')
-  ) ? origin : requestUrl.origin;
-
-  return {
-    'Access-Control-Allow-Origin': allowOrigin,
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': `Content-Type, x-auth-password, ${AUTH_TIME_HEADER}`,
-  };
-};
-
-const getWebsiteConfig = async (env: Env): Promise<WebsiteConfig> => {
-  const rawConfig = await env.CLOUDNAV_KV.get('website_config');
-  return rawConfig ? JSON.parse(rawConfig) : { passwordExpiryDays: 7 };
-};
+const WEBDAV_RATE_LIMIT_PER_WINDOW = 30;
+const DEFAULT_BACKUP_FILENAME = 'cloudnav_backup.json';
 
 const buildJsonResponse = (body: unknown, status: number, corsHeaders: Record<string, string>) =>
   new Response(JSON.stringify(body), {
@@ -53,29 +35,75 @@ const buildWebDavErrorMessage = (status: number) => {
   return `WebDAV 返回异常状态 ${status}`;
 };
 
-const validateAuth = async (request: Request, env: Env, corsHeaders: Record<string, string>) => {
-  if (!env.PASSWORD) {
-    return buildJsonResponse({ error: 'Server misconfigured: PASSWORD not set' }, 500, corsHeaders);
+const normalizeWebDavRequest = (body: unknown): WebDavProxyRequest => {
+  if (!body || typeof body !== 'object') {
+    return {};
   }
 
-  const providedPassword = request.headers.get('x-auth-password');
-  if (!providedPassword || providedPassword !== env.PASSWORD) {
-    return buildJsonResponse({ error: 'Unauthorized' }, 401, corsHeaders);
+  const data = body as Record<string, unknown>;
+  const config = data.config && typeof data.config === 'object'
+    ? data.config as Partial<WebDavConfig>
+    : undefined;
+
+  return {
+    operation: data.operation === 'check' || data.operation === 'upload' || data.operation === 'download'
+      ? data.operation
+      : undefined,
+    config: config && typeof config.url === 'string' && typeof config.username === 'string' && typeof config.password === 'string'
+      ? {
+        url: config.url.trim(),
+        username: config.username,
+        password: config.password,
+        enabled: Boolean(config.enabled),
+      }
+      : undefined,
+    payload: data.payload,
+    filename: typeof data.filename === 'string' && data.filename.trim() ? data.filename.trim() : undefined,
+  };
+};
+
+const buildWebDavRequest = (operation: WebDavOperation, config: WebDavConfig, payload: unknown, filename?: string) => {
+  let baseUrl = config.url.trim();
+  if (!baseUrl.endsWith('/')) baseUrl += '/';
+
+  const finalFilename = filename || DEFAULT_BACKUP_FILENAME;
+  const fileUrl = baseUrl + encodeURIComponent(finalFilename).replace(/%2F/gi, '/');
+  const authHeader = `Basic ${btoa(`${config.username}:${config.password}`)}`;
+  const headers: Record<string, string> = {
+    'Authorization': authHeader,
+    'User-Agent': 'CloudNav/1.0',
+  };
+
+  if (operation === 'check') {
+    return {
+      fetchUrl: baseUrl,
+      method: 'PROPFIND',
+      headers: {
+        ...headers,
+        Depth: '0',
+      },
+      body: undefined,
+    };
   }
 
-  const websiteConfig = await getWebsiteConfig(env);
-  const passwordExpiryDays = websiteConfig.passwordExpiryDays ?? 7;
-  if (passwordExpiryDays > 0) {
-    const authIssuedAtRaw = request.headers.get(AUTH_TIME_HEADER);
-    const authIssuedAt = authIssuedAtRaw ? Number(authIssuedAtRaw) : NaN;
-    const expiryMs = passwordExpiryDays * 24 * 60 * 60 * 1000;
-
-    if (Number.isFinite(authIssuedAt) && authIssuedAt > 0 && Date.now() - authIssuedAt > expiryMs) {
-      return buildJsonResponse({ error: '密码已过期，请重新输入' }, 401, corsHeaders);
-    }
+  if (operation === 'upload') {
+    return {
+      fetchUrl: fileUrl,
+      method: 'PUT',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    };
   }
 
-  return null;
+  return {
+    fetchUrl: fileUrl,
+    method: 'GET',
+    headers,
+    body: undefined,
+  };
 };
 
 export const onRequestOptions = async (context: { request: Request }) =>
@@ -87,79 +115,55 @@ export const onRequestOptions = async (context: { request: Request }) =>
 export const onRequestPost = async (context: { request: Request; env: Env }) => {
   const { request, env } = context;
   const corsHeaders = getCorsHeaders(request);
-  
+
   try {
-    const authError = await validateAuth(request, env, corsHeaders);
-    if (authError) {
-      return authError;
+    if (await isRateLimited(env, request, 'webdav', WEBDAV_RATE_LIMIT_PER_WINDOW)) {
+      return buildRateLimitResponse(corsHeaders);
     }
 
-    const body = await request.json() as any;
-    const { operation, config, payload, filename } = body;
-    
+    const authCheck = await validateAuth(request, env, corsHeaders, { requireSession: true });
+    if (!authCheck.ok) {
+      return authCheck.response;
+    }
+
+    const { operation, config, payload, filename } = normalizeWebDavRequest(await request.json());
+
+    if (!operation) {
+      return buildJsonResponse({ error: 'Invalid operation' }, 400, corsHeaders);
+    }
+
     if (!config || !config.url || !config.username || !config.password) {
-        return buildJsonResponse({ error: 'Missing configuration' }, 400, corsHeaders);
+      return buildJsonResponse({ error: 'Missing configuration' }, 400, corsHeaders);
     }
 
-    let baseUrl = config.url.trim();
-    if (!baseUrl.endsWith('/')) baseUrl += '/';
-    
-    const finalFilename = filename || 'cloudnav_backup.json';
-    const fileUrl = baseUrl + finalFilename;
-
-    const authHeader = `Basic ${btoa(`${config.username}:${config.password}`)}`;
-    
-    let fetchUrl = baseUrl;
-    let method = 'PROPFIND';
-    let headers: Record<string, string> = {
-        'Authorization': authHeader,
-        'User-Agent': 'CloudNav/1.0'
-    };
-    let requestBody = undefined;
-
-    if (operation === 'check') {
-        fetchUrl = baseUrl;
-        method = 'PROPFIND';
-        headers['Depth'] = '0';
-    } else if (operation === 'upload') {
-        fetchUrl = fileUrl;
-        method = 'PUT';
-        headers['Content-Type'] = 'application/json';
-        requestBody = JSON.stringify(payload); 
-    } else if (operation === 'download') {
-        fetchUrl = fileUrl;
-        method = 'GET';
-    } else {
-        return buildJsonResponse({ error: 'Invalid operation' }, 400, corsHeaders);
-    }
-
-    const response = await fetch(fetchUrl, {
-        method,
-        headers,
-        body: requestBody
+    const webDavRequest = buildWebDavRequest(operation, config, payload, filename);
+    const response = await fetch(webDavRequest.fetchUrl, {
+      method: webDavRequest.method,
+      headers: webDavRequest.headers,
+      body: webDavRequest.body,
     });
 
     if (operation === 'download') {
-        if (!response.ok) {
-             return buildJsonResponse({
-               success: false,
-               status: response.status,
-               error: buildWebDavErrorMessage(response.status),
-             }, 200, corsHeaders);
-        }
-        const data = await response.json();
-        return buildJsonResponse(data, 200, corsHeaders);
+      if (!response.ok) {
+        return buildJsonResponse({
+          success: false,
+          status: response.status,
+          error: buildWebDavErrorMessage(response.status),
+        }, 200, corsHeaders);
+      }
+
+      const data = await response.json();
+      return buildJsonResponse(data, 200, corsHeaders);
     }
 
     const success = response.ok || response.status === 207;
-    
     return buildJsonResponse({
       success,
       status: response.status,
       ...(success ? {} : { error: buildWebDavErrorMessage(response.status) }),
     }, 200, corsHeaders);
-
-  } catch (err: any) {
-    return buildJsonResponse({ error: err.message }, 500, corsHeaders);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'WebDAV request failed';
+    return buildJsonResponse({ error: message }, 500, corsHeaders);
   }
 };
