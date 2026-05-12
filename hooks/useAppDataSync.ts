@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Category, DEFAULT_CATEGORIES, INITIAL_LINKS, LinkItem } from '../types';
 
 type SyncStatus = 'idle' | 'saving' | 'saved' | 'error' | 'offline';
@@ -13,6 +13,13 @@ interface UseAppDataSyncOptions {
 }
 
 const LOCAL_STORAGE_KEY = 'cloudnav_data_cache';
+const SYNC_DEBOUNCE_MS = 800;
+
+type PendingSyncPayload = {
+  links: LinkItem[];
+  categories: Category[];
+  token: string;
+};
 
 const normalizeLocalData = (links: LinkItem[], categories: Category[]) => {
   let loadedCategories = categories;
@@ -49,6 +56,9 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
   const [links, setLinks] = useState<LinkItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
+  const debounceTimerRef = useRef<number | null>(null);
+  const pendingSyncRef = useRef<PendingSyncPayload | null>(null);
+  const isSyncingRef = useRef(false);
 
   const loadFromLocal = useCallback(() => {
     const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -100,15 +110,47 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
     }
   }, [buildAuthHeaders, onAuthExpired, onSyncError]);
 
+  const flushSyncQueue = useCallback(async () => {
+    if (isSyncingRef.current || !pendingSyncRef.current) {
+      return;
+    }
+
+    const payload = pendingSyncRef.current;
+    pendingSyncRef.current = null;
+    isSyncingRef.current = true;
+
+    try {
+      await syncToCloud(payload.links, payload.categories, payload.token);
+    } finally {
+      isSyncingRef.current = false;
+      if (pendingSyncRef.current) {
+        void flushSyncQueue();
+      }
+    }
+  }, [syncToCloud]);
+
+  const scheduleSync = useCallback((newLinks: LinkItem[], newCategories: Category[], token: string) => {
+    pendingSyncRef.current = { links: newLinks, categories: newCategories, token };
+
+    if (debounceTimerRef.current) {
+      window.clearTimeout(debounceTimerRef.current);
+    }
+
+    debounceTimerRef.current = window.setTimeout(() => {
+      debounceTimerRef.current = null;
+      void flushSyncQueue();
+    }, SYNC_DEBOUNCE_MS);
+  }, [flushSyncQueue]);
+
   const updateData = useCallback((newLinks: LinkItem[], newCategories: Category[]) => {
     setLinks(newLinks);
     setCategories(newCategories);
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({ links: newLinks, categories: newCategories }));
 
     if (authToken) {
-      syncToCloud(newLinks, newCategories, authToken);
+      scheduleSync(newLinks, newCategories, authToken);
     }
-  }, [authToken, syncToCloud]);
+  }, [authToken, scheduleSync]);
 
   const loadLinkIcons = useCallback(async (linksToLoad: LinkItem[], categoriesToUse: Category[], token?: string) => {
     const activeToken = token || authToken;
@@ -192,9 +234,15 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
     if (hasChanges) {
       setLinks(updatedLinks);
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({ links: updatedLinks, categories: categoriesToUse }));
-      syncToCloud(updatedLinks, categoriesToUse, activeToken);
+      scheduleSync(updatedLinks, categoriesToUse, activeToken);
     }
-  }, [authToken, syncToCloud]);
+  }, [authToken, scheduleSync]);
+
+  useEffect(() => () => {
+    if (debounceTimerRef.current) {
+      window.clearTimeout(debounceTimerRef.current);
+    }
+  }, []);
 
   return {
     links,
