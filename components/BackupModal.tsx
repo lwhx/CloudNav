@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Cloud, Download, Upload, CheckCircle2, AlertCircle, RefreshCw, Save } from 'lucide-react';
 import { Category, LinkItem, WebDavConfig, SearchConfig, AIConfig } from '../types';
+import { createAppDataEnvelope, getLocalDataBackups } from '../services/appDataPersistence';
 import { checkWebDavConnection, uploadBackup, uploadBackupWithTimestamp, downloadBackup } from '../services/webDavService';
 import { generateBookmarkHtml, downloadHtmlFile } from '../services/exportService';
 
@@ -30,10 +31,10 @@ const BackupModal: React.FC<BackupModalProps> = ({
   const [testMessage, setTestMessage] = useState('');
   const [includeWebDavConfig, setIncludeWebDavConfig] = useState(false);
   const [restoreWebDavConfig, setRestoreWebDavConfig] = useState(false);
+  const [localBackups, setLocalBackups] = useState(() => getLocalDataBackups());
 
   const buildBackupPayload = () => ({
-    links,
-    categories,
+    ...createAppDataEnvelope(links, categories),
     searchConfig,
     aiConfig,
     ...(includeWebDavConfig ? { webDavConfig: config } : {})
@@ -47,6 +48,7 @@ const BackupModal: React.FC<BackupModalProps> = ({
         setSyncStatus('idle');
         setIncludeWebDavConfig(false);
         setRestoreWebDavConfig(false);
+        setLocalBackups(getLocalDataBackups());
     }
   }, [isOpen, webDavConfig]);
 
@@ -292,6 +294,36 @@ const BackupModal: React.FC<BackupModalProps> = ({
             </section>
 
             <hr className="border-slate-200 dark:border-slate-700" />
+
+            <section className="space-y-4">
+                <h4 className="font-medium text-slate-800 dark:text-slate-200">本地自动快照</h4>
+                <p className="text-xs text-slate-500">每次覆盖本地缓存前会保留最近 8 份快照，适合误删或误导入后快速回退。</p>
+                {localBackups.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-200 dark:border-slate-700 p-4 text-sm text-slate-500">暂无可恢复的本地快照</div>
+                ) : (
+                    <div className="space-y-2">
+                        {localBackups.slice(0, 5).map((backup) => (
+                            <button
+                                key={`${backup.capturedAt}-${backup.updatedAt}`}
+                                type="button"
+                                onClick={() => {
+                                    if (confirm('确定恢复这份本地快照吗？当前数据会被覆盖。')) {
+                                        onRestore(backup.links, backup.categories);
+                                        setLocalBackups(getLocalDataBackups());
+                                    }
+                                }}
+                                className="flex w-full items-center justify-between rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-3 text-left hover:border-blue-400 transition-colors"
+                            >
+                                <span>
+                                    <span className="block text-sm font-medium text-slate-700 dark:text-slate-200">{new Date(backup.capturedAt).toLocaleString()}</span>
+                                    <span className="block text-xs text-slate-500">{backup.links.length} 个链接，{backup.categories.length} 个分类，数据版本 v{backup.version}</span>
+                                </span>
+                                <RefreshCw size={16} className="text-slate-400" />
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </section>
 
              {/* Section 3: HTML Export */}
              <section className="space-y-4">

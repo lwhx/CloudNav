@@ -35,6 +35,20 @@ export interface AppState {
   settings?: SiteSettings;
 }
 
+export const APP_DATA_VERSION = 2;
+
+export interface AppDataPayload {
+  links: LinkItem[];
+  categories: Category[];
+  version?: number;
+  updatedAt?: number;
+}
+
+export interface AppDataEnvelope extends AppDataPayload {
+  version: number;
+  updatedAt: number;
+}
+
 export interface WebDavConfig {
   url: string;
   username: string;

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Category, DEFAULT_CATEGORIES, INITIAL_LINKS, LinkItem } from '../types';
+import { createAppDataEnvelope, loadLocalAppData, saveLocalAppData } from '../services/appDataPersistence';
 
 type SyncStatus = 'idle' | 'saving' | 'saved' | 'error' | 'offline';
 
@@ -12,7 +13,6 @@ interface UseAppDataSyncOptions {
   onSyncError: () => void;
 }
 
-const LOCAL_STORAGE_KEY = 'cloudnav_data_cache';
 const SYNC_DEBOUNCE_MS = 800;
 
 type PendingSyncPayload = {
@@ -25,10 +25,12 @@ const normalizeLocalData = (links: LinkItem[], categories: Category[]) => {
   let loadedCategories = categories;
 
   if (!loadedCategories.some(c => c.id === 'common')) {
-    loadedCategories = [
-      { id: 'common', name: '常用推荐', icon: 'Star' },
-      ...loadedCategories,
-    ];
+    const commonCategory = DEFAULT_CATEGORIES.find(category => category.id === 'common') || {
+      id: 'common',
+      name: 'Common',
+      icon: 'Star',
+    };
+    loadedCategories = [commonCategory, ...loadedCategories];
   } else {
     const commonIndex = loadedCategories.findIndex(c => c.id === 'common');
     if (commonIndex > 0) {
@@ -61,18 +63,12 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
   const isSyncingRef = useRef(false);
 
   const loadFromLocal = useCallback(() => {
-    const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        const normalized = normalizeLocalData(parsed.links || INITIAL_LINKS, parsed.categories || DEFAULT_CATEGORIES);
-        setLinks(normalized.links);
-        setCategories(normalized.categories);
-      } catch (e) {
-        setLinks(INITIAL_LINKS);
-        setCategories(DEFAULT_CATEGORIES);
-      }
-    } else {
+    try {
+      const stored = loadLocalAppData();
+      const normalized = normalizeLocalData(stored.links || INITIAL_LINKS, stored.categories || DEFAULT_CATEGORIES);
+      setLinks(normalized.links);
+      setCategories(normalized.categories);
+    } catch {
       setLinks(INITIAL_LINKS);
       setCategories(DEFAULT_CATEGORIES);
     }
@@ -86,7 +82,7 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
         headers: buildAuthHeaders(token, {
           'Content-Type': 'application/json',
         }),
-        body: JSON.stringify({ links: newLinks, categories: newCategories }),
+        body: JSON.stringify(createAppDataEnvelope(newLinks, newCategories)),
       });
 
       if (response.status === 401) {
@@ -145,7 +141,7 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
   const updateData = useCallback((newLinks: LinkItem[], newCategories: Category[]) => {
     setLinks(newLinks);
     setCategories(newCategories);
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({ links: newLinks, categories: newCategories }));
+    saveLocalAppData(newLinks, newCategories);
 
     if (authToken) {
       scheduleSync(newLinks, newCategories, authToken);
@@ -225,7 +221,7 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
             linkToUpdate.icon = result.icon;
             hasChanges = true;
           }
-        } catch (e) {
+        } catch {
           return;
         }
       });
@@ -233,7 +229,7 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
 
     if (hasChanges) {
       setLinks(updatedLinks);
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({ links: updatedLinks, categories: categoriesToUse }));
+      saveLocalAppData(updatedLinks, categoriesToUse);
       scheduleSync(updatedLinks, categoriesToUse, activeToken);
     }
   }, [authToken, scheduleSync]);

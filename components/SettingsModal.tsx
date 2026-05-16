@@ -34,6 +34,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   }));
   
   const [isProcessing, setIsProcessing] = useState(false);
+  const [bulkMode, setBulkMode] = useState<'descriptions' | 'organize'>('organize');
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const shouldStopRef = useRef(false);
 
@@ -121,36 +122,49 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         return;
     }
 
-    const missingLinks = links.filter(l => !l.description);
-    if (missingLinks.length === 0) {
+    const shouldOrganize = bulkMode === 'organize';
+    const targetLinks = links.filter(link => !link.description || shouldOrganize);
+    if (targetLinks.length === 0) {
         onNotify?.("所有链接都已有描述", 'info');
         return;
     }
 
-    if (!confirm(`发现 ${missingLinks.length} 个链接缺少描述，确定要使用 AI 自动生成吗？这可能需要一些时间。`)) return;
+    const actionName = shouldOrganize ? '补全描述并推荐分类' : '补全缺失描述';
+    if (!confirm(`将使用 AI 为 ${targetLinks.length} 个链接${actionName}，确定继续吗？`)) return;
 
     setIsProcessing(true);
     shouldStopRef.current = false;
-    setProgress({ current: 0, total: missingLinks.length });
-    
-    const { generateLinkDescription } = await import('../services/geminiService');
+    setProgress({ current: 0, total: targetLinks.length });
+
+    const { generateLinkDescription, suggestCategory } = await import('../services/geminiService');
     let currentLinks = [...links];
 
-    for (let i = 0; i < missingLinks.length; i++) {
+    for (let i = 0; i < targetLinks.length; i++) {
         if (shouldStopRef.current) break;
 
-        const link = missingLinks[i];
+        const link = targetLinks[i];
         try {
-            const desc = await generateLinkDescription(link.title, link.url, localConfig);
-            currentLinks = currentLinks.map(l => l.id === link.id ? { ...l, description: desc } : l);
-            onUpdateLinks(currentLinks);
-            setProgress({ current: i + 1, total: missingLinks.length });
+            const [desc, suggestedCategoryId] = await Promise.all([
+                link.description ? Promise.resolve(link.description) : generateLinkDescription(link.title, link.url, localConfig),
+                shouldOrganize ? suggestCategory(link.title, link.url, categories, localConfig) : Promise.resolve(null),
+            ]);
+
+            currentLinks = currentLinks.map(item => item.id === link.id ? {
+                ...item,
+                description: desc || item.description,
+                categoryId: suggestedCategoryId && categories.some(category => category.id === suggestedCategoryId)
+                    ? suggestedCategoryId
+                    : item.categoryId,
+            } : item);
+            setProgress({ current: i + 1, total: targetLinks.length });
         } catch (e) {
-            console.error(`Failed to generate for ${link.title}`, e);
+            console.error(`Failed to organize ${link.title}`, e);
         }
     }
 
+    onUpdateLinks(currentLinks);
     setIsProcessing(false);
+    onNotify?.(shouldStopRef.current ? 'AI 批量整理已停止，已保存完成部分' : 'AI 批量整理完成', shouldStopRef.current ? 'warning' : 'success');
   };
 
   const handleCopy = (text: string, key: string) => {
@@ -1093,6 +1107,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         zip.file("sidebar.js", extSidebarJs);
         zip.file("popup.html", extPopupHtml);
         zip.file("popup.js", extPopupJs);
+        zip.file("README.txt", 'CloudNav 浏览器扩展\n\n功能：\n- 扩展图标打开弹窗，右上角可切换侧边栏。\n- 页面、链接、扩展图标右键可直接保存到指定分类。\n- 保存前会检查当前链接是否已存在，并在右键菜单中提示。\n- 快捷键默认 Ctrl+Shift+E 打开弹窗，Alt+Shift+E 打开侧边栏。\n\n安装：\n1. Chrome/Edge 打开 chrome://extensions 并启用开发者模式。\n2. 选择“加载已解压的扩展程序”，指向解压后的 CloudNav-Ext 文件夹。\n3. 如需调整快捷键，打开 chrome://extensions/shortcuts。');
         
         const iconBlob = await generateIconBlob();
         if (iconBlob) {

@@ -35,9 +35,11 @@ import { useSiteSettings } from './hooks/useSiteSettings';
 import { useContextMenu } from './hooks/useContextMenu';
 import { useAppDataSync } from './hooks/useAppDataSync';
 import { useAuthSession } from './hooks/useAuthSession';
-import { createDefaultSearchSources, useSearchConfig } from './hooks/useSearchConfig';
+import { useSearchConfig } from './hooks/useSearchConfig';
 import { useCategoryAccess } from './hooks/useCategoryAccess';
 import { useLinkOrganizer } from './hooks/useLinkOrganizer';
+import { fetchProtectedConfigsAfterLogin, useAppBootstrap } from './hooks/useAppBootstrap';
+import { saveLocalAppData } from './services/appDataPersistence';
 import LinkCard from './components/links/LinkCard';
 import SortableLinkCard from './components/links/SortableLinkCard';
 
@@ -45,7 +47,6 @@ import SortableLinkCard from './components/links/SortableLinkCard';
 // 项目核心仓库地址
 const GITHUB_REPO_URL = 'https://github.com/Aaowu/CloudNav-Oorz';
 
-const LOCAL_STORAGE_KEY = 'cloudnav_data_cache';
 const AUTH_KEY = 'cloudnav_auth_token';
 const AUTH_TIME_KEY = 'lastLoginTime';
 const WEBDAV_CONFIG_KEY = 'cloudnav_webdav_config';
@@ -212,201 +213,31 @@ function App() {
 
   // --- Effects ---
 
-  useEffect(() => {
-    // Load Token and check expiry
-    const savedToken = localStorage.getItem(AUTH_KEY);
-    const lastLoginTime = localStorage.getItem(AUTH_TIME_KEY);
-    
-    if (savedToken) {
-      const currentTime = Date.now();
-      
-      if (lastLoginTime) {
-        const lastLogin = parseInt(lastLoginTime);
-        const timeDiff = currentTime - lastLogin;
-        
-        const expiryDays = siteSettings.passwordExpiryDays || 7;
-        const expiryTimeMs = expiryDays > 0 ? expiryDays * 24 * 60 * 60 * 1000 : 0;
-        
-        if (expiryTimeMs > 0 && timeDiff > expiryTimeMs) {
-          clearAuthSession();
-        } else {
-          setAuthToken(savedToken);
-        }
-      } else {
-        setAuthToken(savedToken);
-      }
-    }
-
-    // Load WebDAV Config
-    const savedWebDav = localStorage.getItem(WEBDAV_CONFIG_KEY);
-    if (savedWebDav) {
-        try {
-            setWebDavConfig(JSON.parse(savedWebDav));
-        } catch (e) {}
-    }
-
-    // Handle URL Params for Bookmarklet (Add Link)
-    const urlParams = new URLSearchParams(window.location.search);
-    const addUrl = urlParams.get('add_url');
-    if (addUrl) {
-        const addTitle = urlParams.get('add_title') || '';
-        // Clean URL params to avoid re-triggering on refresh
-        window.history.replaceState({}, '', window.location.pathname);
-        
-        setPrefillLink({
-            title: addTitle,
-            url: addUrl,
-            categoryId: 'common' // Default, Modal will handle selection
-        });
-        setEditingLink(undefined);
-        if (savedToken) {
-            setIsModalOpen(true);
-        } else {
-            setIsAuthOpen(true);
-        }
-    }
-
-    // Initial Data Fetch
-    const initData = async () => {
-        // 首先检查是否需要认证
-        try {
-            const authRes = await fetch('/api/storage?checkAuth=true');
-            if (authRes.ok) {
-                const authData = await authRes.json();
-                setRequiresAuth(authData.requiresAuth);
-                if (authData.hasPassword && savedToken) {
-                    const validateRes = await fetch('/api/storage', {
-                        method: 'POST',
-                        headers: buildAuthHeaders(savedToken, {
-                            'Content-Type': 'application/json',
-                        }),
-                        body: JSON.stringify({ authOnly: true })
-                    });
-
-                    if (!validateRes.ok) {
-                        clearAuthSession();
-                    } else {
-                        const validateData = await validateRes.json();
-                        if (validateData?.authenticatedAt) {
-                            localStorage.setItem(AUTH_TIME_KEY, String(validateData.authenticatedAt));
-                            setAuthToken(savedToken);
-                        }
-                    }
-                }
-                if (authData.requiresAuth && !savedToken) {
-                    setIsCheckingAuth(false);
-                    return;
-                }
-            }
-        } catch (e) {
-            console.warn("Failed to check auth requirement.", e);
-        }
-        
-        // 获取数据
-        let hasCloudData = false;
-        const activeToken = savedToken || authToken;
-        try {
-            const res = await fetch('/api/storage', {
-                headers: activeToken ? buildAuthHeaders(activeToken) : {}
-            });
-            if (res.ok) {
-                const data = await res.json();
-                if (Array.isArray(data.links) || Array.isArray(data.categories)) {
-                    const cloudLinks = Array.isArray(data.links) ? data.links : [];
-                    const cloudCategories = Array.isArray(data.categories) ? data.categories : DEFAULT_CATEGORIES;
-                    setLinks(cloudLinks);
-                    setCategories(cloudCategories);
-                    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({
-                        links: cloudLinks,
-                        categories: cloudCategories
-                    }));
-                    
-                    // 加载链接图标缓存
-                    loadLinkIcons(cloudLinks, cloudCategories);
-                    hasCloudData = true;
-                }
-            } else if (res.status === 401) {
-                // 如果返回401，可能是密码过期，清除本地token并要求重新登录
-                const errorData = await res.json();
-                if (errorData.error && errorData.error.includes('过期')) {
-                    clearAuthSession();
-                    setIsAuthOpen(true);
-                    setIsCheckingAuth(false);
-                    return;
-                }
-            }
-        } catch (e) {
-            console.warn("Failed to fetch from cloud, falling back to local.", e);
-        }
-        
-        // 无论是否有云端数据，都尝试从KV空间加载搜索配置和网站配置
-        try {
-            const searchConfigRes = await fetch('/api/storage?getConfig=search');
-            if (searchConfigRes.ok) {
-                const searchConfigData = await searchConfigRes.json();
-                // 检查搜索配置是否有效（包含必要的字段）
-                if (searchConfigData && (searchConfigData.mode || searchConfigData.externalSources || searchConfigData.selectedSource)) {
-                    setSearchMode('internal');
-                    setExternalSearchSources(searchConfigData.externalSources || []);
-                    // 加载已保存的选中搜索源
-                    if (searchConfigData.selectedSource) {
-                        setSelectedSearchSource(searchConfigData.selectedSource);
-                    }
-                }
-            }
-            
-            // 获取网站配置（包括密码过期时间设置）
-            const websiteConfigRes = await fetch('/api/storage?getConfig=website');
-            if (websiteConfigRes.ok) {
-                const websiteConfigData = await websiteConfigRes.json();
-                if (websiteConfigData) {
-                    setSiteSettings(prev => ({
-                        ...prev,
-                        title: websiteConfigData.title || prev.title,
-                        navTitle: websiteConfigData.navTitle || prev.navTitle,
-                        favicon: websiteConfigData.favicon || prev.favicon,
-                        cardStyle: websiteConfigData.cardStyle || prev.cardStyle,
-                        requirePasswordOnVisit: websiteConfigData.requirePasswordOnVisit !== undefined ? websiteConfigData.requirePasswordOnVisit : prev.requirePasswordOnVisit,
-                        passwordExpiryDays: websiteConfigData.passwordExpiryDays !== undefined ? websiteConfigData.passwordExpiryDays : prev.passwordExpiryDays
-                    }));
-                }
-            }
-
-            if (savedToken) {
-                const webDavConfigRes = await fetch('/api/storage?getConfig=webdav', {
-                    headers: buildAuthHeaders(savedToken)
-                });
-                if (webDavConfigRes.ok) {
-                    const webDavConfigData = await webDavConfigRes.json();
-                    if (webDavConfigData && (webDavConfigData.url || webDavConfigData.username || webDavConfigData.password || webDavConfigData.enabled !== undefined)) {
-                        setWebDavConfig(webDavConfigData);
-                        localStorage.setItem(WEBDAV_CONFIG_KEY, JSON.stringify(webDavConfigData));
-                    }
-                }
-            }
-        } catch (e) {
-            console.warn("Failed to fetch configs from KV.", e);
-        }
-        
-        // 如果有云端数据，则不需要加载本地数据
-        if (hasCloudData) {
-            setIsCheckingAuth(false);
-            return;
-        }
-        
-        // 如果没有云端数据，则加载本地数据
-        loadFromLocal();
-        
-        // 如果从KV空间加载搜索配置失败，直接使用默认配置（不使用localStorage回退）
-        setSearchMode('internal');
-        setExternalSearchSources(createDefaultSearchSources());
-        
-        setIsLoadingSearchConfig(false);
-        setIsCheckingAuth(false);
-    };
-
-    initData();
-  }, []);
+  useAppBootstrap({
+    authToken,
+    siteSettings,
+    links,
+    categories,
+    setAuthToken,
+    setRequiresAuth,
+    setIsCheckingAuth,
+    buildAuthHeaders,
+    clearAuthSession,
+    setLinks,
+    setCategories,
+    loadFromLocal,
+    loadLinkIcons,
+    setSearchMode,
+    setExternalSearchSources,
+    setSelectedSearchSource,
+    setIsLoadingSearchConfig,
+    setSiteSettings,
+    setWebDavConfig,
+    setPrefillLink,
+    setEditingLink,
+    setIsModalOpen,
+    setIsAuthOpen,
+  });
 
   const handleLogin = async (password: string): Promise<boolean> => {
       try {
@@ -481,13 +312,10 @@ function App() {
 
                         setLinks(cloudLinks);
                         setCategories(cloudCategories);
-                        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({
-                            links: cloudLinks,
-                            categories: cloudCategories
-                        }));
+                        saveLocalAppData(cloudLinks, cloudCategories);
                         loadLinkIcons(cloudLinks, cloudCategories);
                     } else {
-                        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({ links, categories }));
+                        saveLocalAppData(links, categories);
                         syncToCloud(links, categories, password);
                         loadLinkIcons(links, categories);
                     }

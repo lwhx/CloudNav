@@ -1,4 +1,4 @@
-import { Category, LinkItem } from '../../types';
+import { APP_DATA_VERSION, Category, LinkItem } from '../../types';
 import { buildRateLimitResponse, Env, getCorsHeaders, isRateLimited, validateAuth } from './storage-shared';
 
 interface QuickAddLinkRequest {
@@ -12,6 +12,8 @@ interface QuickAddLinkRequest {
 interface StoredAppData {
   links: LinkItem[];
   categories: Category[];
+  version?: number;
+  updatedAt?: number;
 }
 
 const LINK_RATE_LIMIT_PER_WINDOW = 20;
@@ -139,6 +141,8 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     const nextData: StoredAppData = {
       ...currentData,
       links: [newLink, ...currentData.links],
+      version: APP_DATA_VERSION,
+      updatedAt: createdAt,
     };
 
     await env.CLOUDNAV_KV.put('app_data', JSON.stringify(nextData));

@@ -1,3 +1,6 @@
+> 编码说明：本仓库所有源码和文档均使用 UTF-8。Windows PowerShell 如果直接 `Get-Content` 显示中文乱码，可先执行 `chcp 65001`，或使用支持 UTF-8 的编辑器查看。
+
+
 # CloudNav-Oorz（修改版）
 本项目基于
 https://github.com/sese972010/CloudNav-
