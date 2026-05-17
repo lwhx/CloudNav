@@ -28,14 +28,14 @@ export const generateBookmarkHtml = (links: LinkItem[], categories: Category[]):
 
   // Group links by category
   const linksByCat = new Map<string, LinkItem[]>();
-  links.forEach(link => {
+  links.filter(link => !link.deletedAt).forEach(link => {
     const list = linksByCat.get(link.categoryId) || [];
     list.push(link);
     linksByCat.set(link.categoryId, list);
   });
 
   // 1. Process Categories
-  categories.forEach(cat => {
+  categories.filter(cat => !cat.deletedAt).forEach(cat => {
     const catLinks = linksByCat.get(cat.id) || [];
     
     html += `    <DT><H3 ADD_DATE="${now}" LAST_MODIFIED="${now}">${escapeHtml(cat.name)}</H3>\n`;
@@ -51,8 +51,8 @@ export const generateBookmarkHtml = (links: LinkItem[], categories: Category[]):
   });
 
   // 2. Process Uncategorized (links with invalid categoryId)
-  const validCatIds = new Set(categories.map(c => c.id));
-  const uncategorized = links.filter(l => !validCatIds.has(l.categoryId));
+  const validCatIds = new Set(categories.filter(c => !c.deletedAt).map(c => c.id));
+  const uncategorized = links.filter(l => !l.deletedAt && !validCatIds.has(l.categoryId));
 
   if (uncategorized.length > 0) {
     html += `    <DT><H3 ADD_DATE="${now}" LAST_MODIFIED="${now}">未分类</H3>\n`;

@@ -1,9 +1,10 @@
 
-import { Category, LinkItem, WebDavConfig, SearchConfig, AIConfig } from "../types";
+import { Category, CategoryGroup, LinkItem, WebDavConfig, SearchConfig, AIConfig } from "../types";
 
 type BackupPayload = {
     links: LinkItem[],
     categories: Category[],
+    categoryGroups?: CategoryGroup[],
     searchConfig?: SearchConfig,
     aiConfig?: AIConfig,
     webDavConfig?: WebDavConfig
@@ -15,6 +16,7 @@ type ProxyResult = {
     error?: string,
     links?: LinkItem[],
     categories?: Category[],
+    categoryGroups?: CategoryGroup[],
     searchConfig?: SearchConfig,
     aiConfig?: AIConfig,
     webDavConfig?: WebDavConfig

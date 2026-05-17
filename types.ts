@@ -4,20 +4,51 @@ export interface LinkItem {
   url: string;
   icon?: string;
   description?: string;
+  tags?: string[];
   categoryId: string;
   createdAt: number;
   pinned?: boolean; // New field for pinning
   pinnedOrder?: number; // Field for pinned link sorting order
   order?: number;
+  deletedAt?: number;
+  deletedFromCategoryId?: string;
 }
 
 export interface Category {
   id: string;
   name: string;
   icon: string; // Lucide icon name or emoji
+  groupId?: string;
   password?: string; // Optional password for category protection
   requireAuth?: boolean; // 使用全站密码后才可查看该分类内容
+  deletedAt?: number;
 }
+
+
+export interface CategoryGroup {
+  id: string;
+  name: string;
+  icon?: string;
+  order?: number;
+  deletedAt?: number;
+}
+
+export type TrashItemType = 'link' | 'category';
+
+export interface AIOrganizeResult {
+  description?: string;
+  categoryId?: string;
+  tags?: string[];
+}
+
+export const DEFAULT_CATEGORY_GROUP_ID = 'default';
+
+export const DEFAULT_CATEGORY_GROUP: CategoryGroup = {
+  id: DEFAULT_CATEGORY_GROUP_ID,
+  name: '默认分组',
+  icon: 'Folder',
+  order: 0,
+};
 
 export interface SiteSettings {
   title: string;
@@ -31,6 +62,7 @@ export interface SiteSettings {
 export interface AppState {
   links: LinkItem[];
   categories: Category[];
+  categoryGroups?: CategoryGroup[];
   darkMode: boolean;
   settings?: SiteSettings;
 }
@@ -40,6 +72,7 @@ export const APP_DATA_VERSION = 2;
 export interface AppDataPayload {
   links: LinkItem[];
   categories: Category[];
+  categoryGroups?: CategoryGroup[];
   version?: number;
   updatedAt?: number;
 }

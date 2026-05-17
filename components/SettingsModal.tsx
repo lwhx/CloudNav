@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Bot, Key, Globe, Sparkles, PauseCircle, Wrench, Box, Copy, Check, LayoutTemplate, Info, Download, Sidebar, Keyboard, MousePointerClick, AlertTriangle, Package, Zap, Menu, Upload } from 'lucide-react';
 import { AIConfig, LinkItem, Category, SiteSettings } from '../types';
+import { normalizeTags } from '../services/appDataPersistence';
 import JSZip from 'jszip';
 import { NotifyHandler } from '../hooks/useToast';
 
@@ -34,7 +35,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   }));
   
   const [isProcessing, setIsProcessing] = useState(false);
-  const [bulkMode, setBulkMode] = useState<'descriptions' | 'organize'>('organize');
+  const [organizeOptions, setOrganizeOptions] = useState({ description: true, category: true, tags: true });
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const shouldStopRef = useRef(false);
 
@@ -122,49 +123,76 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         return;
     }
 
-    const shouldOrganize = bulkMode === 'organize';
-    const targetLinks = links.filter(link => !link.description || shouldOrganize);
-    if (targetLinks.length === 0) {
-        onNotify?.("所有链接都已有描述", 'info');
+    if (!organizeOptions.description && !organizeOptions.category && !organizeOptions.tags) {
+        onNotify?.("请至少选择一个 AI 整理项目", 'warning');
         return;
     }
 
-    const actionName = shouldOrganize ? '补全描述并推荐分类' : '补全缺失描述';
-    if (!confirm(`将使用 AI 为 ${targetLinks.length} 个链接${actionName}，确定继续吗？`)) return;
+    const targetLinks = links.filter(link => !link.deletedAt && (
+        (organizeOptions.description && !link.description)
+        || organizeOptions.category
+        || organizeOptions.tags
+    ));
+
+    if (targetLinks.length === 0) {
+        onNotify?.("没有需要整理的链接", 'info');
+        return;
+    }
+
+    const actionNames = [
+        organizeOptions.description ? '补描述' : '',
+        organizeOptions.category ? '推荐分类' : '',
+        organizeOptions.tags ? '推荐标签' : '',
+    ].filter(Boolean).join('、');
+    if (!confirm(`将使用 AI 为 ${targetLinks.length} 个链接执行${actionNames}，结果会在完成后写入，确定继续吗？`)) return;
 
     setIsProcessing(true);
     shouldStopRef.current = false;
     setProgress({ current: 0, total: targetLinks.length });
 
-    const { generateLinkDescription, suggestCategory } = await import('../services/geminiService');
+    const { organizeLink } = await import('../services/geminiService');
     let currentLinks = [...links];
+    let failedCount = 0;
 
     for (let i = 0; i < targetLinks.length; i++) {
         if (shouldStopRef.current) break;
 
         const link = targetLinks[i];
         try {
-            const [desc, suggestedCategoryId] = await Promise.all([
-                link.description ? Promise.resolve(link.description) : generateLinkDescription(link.title, link.url, localConfig),
-                shouldOrganize ? suggestCategory(link.title, link.url, categories, localConfig) : Promise.resolve(null),
-            ]);
+            const tagPool = normalizeTags(currentLinks.flatMap(item => item.tags || []));
+            const result = await organizeLink(link.title, link.url, link.description, categories.filter(category => !category.deletedAt), tagPool, localConfig);
 
-            currentLinks = currentLinks.map(item => item.id === link.id ? {
-                ...item,
-                description: desc || item.description,
-                categoryId: suggestedCategoryId && categories.some(category => category.id === suggestedCategoryId)
-                    ? suggestedCategoryId
-                    : item.categoryId,
-            } : item);
+            if (!result.description && !result.categoryId && (!result.tags || result.tags.length === 0)) {
+                failedCount += 1;
+                setProgress({ current: i + 1, total: targetLinks.length });
+                continue;
+            }
+
+            currentLinks = currentLinks.map(item => {
+                if (item.id !== link.id) return item;
+                return {
+                    ...item,
+                    description: organizeOptions.description && result.description ? result.description : item.description,
+                    categoryId: organizeOptions.category && result.categoryId && categories.some(category => !category.deletedAt && category.id === result.categoryId)
+                        ? result.categoryId
+                        : item.categoryId,
+                    tags: organizeOptions.tags && result.tags?.length
+                        ? normalizeTags([...(item.tags || []), ...result.tags])
+                        : item.tags,
+                };
+            });
             setProgress({ current: i + 1, total: targetLinks.length });
         } catch (e) {
+            failedCount += 1;
             console.error(`Failed to organize ${link.title}`, e);
+            setProgress({ current: i + 1, total: targetLinks.length });
         }
     }
 
     onUpdateLinks(currentLinks);
     setIsProcessing(false);
-    onNotify?.(shouldStopRef.current ? 'AI 批量整理已停止，已保存完成部分' : 'AI 批量整理完成', shouldStopRef.current ? 'warning' : 'success');
+    const stopMessage = shouldStopRef.current ? 'AI 批量整理已停止，已保存完成部分' : 'AI 批量整理完成';
+    onNotify?.(failedCount > 0 ? `${stopMessage}，失败 ${failedCount} 条` : stopMessage, shouldStopRef.current || failedCount > 0 ? 'warning' : 'success');
   };
 
   const handleCopy = (text: string, key: string) => {
@@ -1325,26 +1353,42 @@ document.addEventListener('DOMContentLoaded', async () => {
                         </div>
 
                         <div className="pt-4 border-t border-slate-100 dark:border-slate-700">
-                            <h4 className="text-sm font-semibold mb-2 dark:text-slate-200">批量操作</h4>
+                            <h4 className="text-sm font-semibold mb-2 dark:text-slate-200">AI 深度整理</h4>
                             {isProcessing ? (
                                 <div className="space-y-2">
                                     <div className="flex justify-between text-xs text-slate-600 dark:text-slate-400">
-                                        <span>正在生成描述... ({progress.current}/{progress.total})</span>
-                                        <button onClick={() => { shouldStopRef.current = true; setIsProcessing(false); }} className="text-red-500 flex items-center gap-1 hover:underline">
+                                        <span>正在整理链接... ({progress.current}/{progress.total})</span>
+                                        <button onClick={() => { shouldStopRef.current = true; }} className="text-red-500 flex items-center gap-1 hover:underline">
                                             <PauseCircle size={12}/> 停止
                                         </button>
                                     </div>
                                     <div className="w-full h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-                                        <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${(progress.current / progress.total) * 100}%` }}></div>
+                                        <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${progress.total ? (progress.current / progress.total) * 100 : 0}%` }}></div>
                                     </div>
                                 </div>
                             ) : (
-                                <button 
-                                    onClick={handleBulkGenerate}
-                                    className="flex items-center gap-2 text-sm text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 px-3 py-2 rounded-lg transition-colors border border-purple-200 dark:border-purple-800"
-                                >
-                                    <Sparkles size={16} /> 一键补全所有缺失的描述
-                                </button>
+                                <div className="space-y-3">
+                                    <div className="grid grid-cols-3 gap-2 text-xs text-slate-600 dark:text-slate-300">
+                                        <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
+                                            <input type="checkbox" checked={organizeOptions.description} onChange={(event) => setOrganizeOptions(prev => ({ ...prev, description: event.target.checked }))} />
+                                            补描述
+                                        </label>
+                                        <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
+                                            <input type="checkbox" checked={organizeOptions.category} onChange={(event) => setOrganizeOptions(prev => ({ ...prev, category: event.target.checked }))} />
+                                            推荐分类
+                                        </label>
+                                        <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
+                                            <input type="checkbox" checked={organizeOptions.tags} onChange={(event) => setOrganizeOptions(prev => ({ ...prev, tags: event.target.checked }))} />
+                                            推荐标签
+                                        </label>
+                                    </div>
+                                    <button 
+                                        onClick={handleBulkGenerate}
+                                        className="flex items-center gap-2 text-sm text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 px-3 py-2 rounded-lg transition-colors border border-purple-200 dark:border-purple-800"
+                                    >
+                                        <Sparkles size={16} /> 按选项批量整理链接
+                                    </button>
+                                </div>
                             )}
                         </div>
                     </div>

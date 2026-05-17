@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Search, Plus, Upload, Moon, Sun, Menu, 
   Trash2, Edit2, Loader2, Cloud, CheckCircle2, AlertCircle,
-  Pin, Settings, Lock, CloudCog, Github, GitFork, GripVertical, Save, CheckSquare, LogOut, ExternalLink, X, Info
+  Pin, Settings, Lock, CloudCog, Github, GitFork, GripVertical, Save, CheckSquare, LogOut, ExternalLink, X, Info, ChevronDown, ChevronRight, Tag
 } from 'lucide-react';
 import {
   DndContext,
@@ -15,7 +15,7 @@ import {
   verticalListSortingStrategy,
   rectSortingStrategy,
 } from '@dnd-kit/sortable';
-import { LinkItem, Category, DEFAULT_CATEGORIES, INITIAL_LINKS, WebDavConfig, AIConfig, SearchMode, ExternalSearchSource, SearchConfig } from './types';
+import { LinkItem, Category, CategoryGroup, DEFAULT_CATEGORIES, DEFAULT_CATEGORY_GROUP, DEFAULT_CATEGORY_GROUP_ID, INITIAL_LINKS, WebDavConfig, AIConfig, SearchMode, ExternalSearchSource, SearchConfig } from './types';
 import { parseBookmarks } from './services/bookmarkParser';
 import Icon from './components/Icon';
 import LinkModal from './components/LinkModal';
@@ -28,6 +28,7 @@ import SettingsModal from './components/SettingsModal';
 import SearchConfigModal from './components/SearchConfigModal';
 import ContextMenu from './components/ContextMenu';
 import QRCodeModal from './components/QRCodeModal';
+import TrashModal from './components/TrashModal';
 import ToastContainer from './components/ToastContainer';
 import { useToast } from './hooks/useToast';
 import { useTheme } from './hooks/useTheme';
@@ -39,7 +40,7 @@ import { useSearchConfig } from './hooks/useSearchConfig';
 import { useCategoryAccess } from './hooks/useCategoryAccess';
 import { useLinkOrganizer } from './hooks/useLinkOrganizer';
 import { fetchProtectedConfigsAfterLogin, useAppBootstrap } from './hooks/useAppBootstrap';
-import { saveLocalAppData } from './services/appDataPersistence';
+import { saveLocalAppData, normalizeTags } from './services/appDataPersistence';
 import LinkCard from './components/links/LinkCard';
 import SortableLinkCard from './components/links/SortableLinkCard';
 
@@ -52,6 +53,57 @@ const AUTH_TIME_KEY = 'lastLoginTime';
 const WEBDAV_CONFIG_KEY = 'cloudnav_webdav_config';
 const AI_CONFIG_KEY = 'cloudnav_ai_config';
 const SEARCH_CONFIG_KEY = 'cloudnav_search_config';
+
+const mergeCategoryGroups = (currentGroups: CategoryGroup[], incomingGroups: CategoryGroup[] = []) => {
+  const map = new Map<string, CategoryGroup>();
+  [...currentGroups, ...incomingGroups].forEach(group => {
+    if (group?.id) map.set(group.id, group);
+  });
+  if (!map.has(DEFAULT_CATEGORY_GROUP.id)) map.set(DEFAULT_CATEGORY_GROUP.id, DEFAULT_CATEGORY_GROUP);
+  return Array.from(map.values()).sort((a, b) => (a.order || 0) - (b.order || 0));
+};
+
+const matchesLinkQuery = (link: LinkItem, rawQuery: string) => {
+  const query = rawQuery.trim().toLowerCase();
+  if (!query) return true;
+  const tags = link.tags || [];
+  if (query.startsWith('#')) {
+    const tagQuery = query.slice(1);
+    return tags.some(tag => tag.toLowerCase() === tagQuery || tag.toLowerCase().includes(tagQuery));
+  }
+  return link.title.toLowerCase().includes(query)
+    || link.url.toLowerCase().includes(query)
+    || !!link.description?.toLowerCase().includes(query)
+    || tags.some(tag => tag.toLowerCase().includes(query));
+};
+
+const buildGroupedCategories = (groups: CategoryGroup[], categories: Category[]) => {
+  const activeGroups = groups.filter(group => !group.deletedAt);
+  const groupMap = new Map(activeGroups.map(group => [group.id, { ...group, categories: [] as Category[] }]));
+
+  if (!groupMap.has(DEFAULT_CATEGORY_GROUP_ID)) {
+    groupMap.set(DEFAULT_CATEGORY_GROUP_ID, { ...DEFAULT_CATEGORY_GROUP, categories: [] });
+  }
+
+  categories.filter(category => !category.deletedAt).forEach(category => {
+    const groupId = category.groupId && groupMap.has(category.groupId) ? category.groupId : DEFAULT_CATEGORY_GROUP_ID;
+    groupMap.get(groupId)?.categories.push(category);
+  });
+
+  return Array.from(groupMap.values())
+    .filter(group => group.id === DEFAULT_CATEGORY_GROUP_ID || group.categories.length > 0)
+    .sort((a, b) => (a.order || 0) - (b.order || 0));
+};
+
+const mergeTags = (currentTags: string[] | undefined, rawTags: string, remove = false) => {
+  const parsedTags = normalizeTags(rawTags.split(/[，,\n]/));
+  if (parsedTags.length === 0) return currentTags || [];
+  if (remove) {
+    const removeSet = new Set(parsedTags.map(tag => tag.toLowerCase()));
+    return (currentTags || []).filter(tag => !removeSet.has(tag.toLowerCase()));
+  }
+  return normalizeTags([...(currentTags || []), ...parsedTags]);
+};
 
 
 function App() {
@@ -95,6 +147,9 @@ function App() {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isSearchConfigModalOpen, setIsSearchConfigModalOpen] = useState(false);
+  const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(new Set());
+  const [batchTagText, setBatchTagText] = useState('');
   const [editingLink, setEditingLink] = useState<LinkItem | undefined>(undefined);
   // State for data pre-filled from Bookmarklet
   const [prefillLink, setPrefillLink] = useState<Partial<LinkItem> | undefined>(undefined);
@@ -131,6 +186,8 @@ function App() {
     setLinks,
     categories,
     setCategories,
+    categoryGroups,
+    setCategoryGroups,
     syncStatus,
     setSyncStatus,
     loadFromLocal,
@@ -225,6 +282,7 @@ function App() {
     clearAuthSession,
     setLinks,
     setCategories,
+    setCategoryGroups,
     loadFromLocal,
     loadLinkIcons,
     setSearchMode,
@@ -309,14 +367,16 @@ function App() {
                     if (Array.isArray(data.links) || Array.isArray(data.categories)) {
                         const cloudLinks = Array.isArray(data.links) ? data.links : [];
                         const cloudCategories = Array.isArray(data.categories) ? data.categories : DEFAULT_CATEGORIES;
+                        const cloudCategoryGroups = Array.isArray(data.categoryGroups) ? data.categoryGroups : [DEFAULT_CATEGORY_GROUP];
 
                         setLinks(cloudLinks);
                         setCategories(cloudCategories);
-                        saveLocalAppData(cloudLinks, cloudCategories);
+                        setCategoryGroups(cloudCategoryGroups);
+                        saveLocalAppData(cloudLinks, cloudCategories, cloudCategoryGroups);
                         loadLinkIcons(cloudLinks, cloudCategories);
                     } else {
-                        saveLocalAppData(links, categories);
-                        syncToCloud(links, categories, password);
+                        saveLocalAppData(links, categories, categoryGroups);
+                        syncToCloud(links, categories, password, categoryGroups);
                         loadLinkIcons(links, categories);
                     }
                 } 
@@ -324,7 +384,7 @@ function App() {
                 console.warn("Failed to fetch data after login.", e);
                 loadFromLocal();
                 // 尝试将本地数据同步到服务器
-                syncToCloud(links, categories, password);
+                syncToCloud(links, categories, password, categoryGroups);
             }
             
             // 登录成功后，从KV空间加载AI配置
@@ -379,7 +439,7 @@ function App() {
       loadFromLocal();
   };
 
-  const handleImportConfirm = (newLinks: LinkItem[], newCategories: Category[]) => {
+  const handleImportConfirm = (newLinks: LinkItem[], newCategories: Category[], newCategoryGroups?: CategoryGroup[]) => {
       // Merge categories: Avoid duplicate names/IDs
       const mergedCategories = [...categories];
       
@@ -389,13 +449,14 @@ function App() {
       }
       
       newCategories.forEach(nc => {
-          if (!mergedCategories.some(c => c.id === nc.id || c.name === nc.name)) {
+          if (nc.deletedAt || !mergedCategories.some(c => c.id === nc.id || c.name === nc.name)) {
               mergedCategories.push(nc);
           }
       });
 
       const mergedLinks = [...links, ...newLinks];
-      updateData(mergedLinks, mergedCategories);
+      const mergedGroups = newCategoryGroups?.length ? mergeCategoryGroups(categoryGroups, newCategoryGroups) : categoryGroups;
+      updateData(mergedLinks, mergedCategories, mergedGroups);
       setIsImportModalOpen(false);
       showToast(`成功导入 ${newLinks.length} 个新书签`, 'success');
   };
@@ -504,8 +565,8 @@ function App() {
       handleSaveWebDavConfig(config);
   };
 
- const handleRestoreBackup = (restoredLinks: LinkItem[], restoredCategories: Category[]) => {
-      updateData(restoredLinks, restoredCategories);
+ const handleRestoreBackup = (restoredLinks: LinkItem[], restoredCategories: Category[], restoredCategoryGroups?: CategoryGroup[]) => {
+      updateData(restoredLinks, restoredCategories, restoredCategoryGroups);
       setIsBackupModalOpen(false);
   };
 
@@ -513,11 +574,55 @@ function App() {
       handleSaveSearchConfig(restoredSearchConfig.externalSources, restoredSearchConfig.mode);
   };
 
+  const groupedCategories = useMemo(() => buildGroupedCategories(categoryGroups, categories), [categoryGroups, categories]);
+
+  useEffect(() => {
+    if (selectedCategory === 'all') return;
+    const selected = categories.find(category => category.id === selectedCategory);
+    if (!selected) return;
+    const groupId = selected.groupId || DEFAULT_CATEGORY_GROUP_ID;
+    setCollapsedGroupIds(prev => {
+      if (!prev.has(groupId)) return prev;
+      const next = new Set(prev);
+      next.delete(groupId);
+      return next;
+    });
+  }, [categories, selectedCategory]);
+
+  const toggleGroupCollapse = (groupId: string) => {
+    setCollapsedGroupIds(prev => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  };
+
+  const handleBatchTagChange = (remove = false) => {
+    if (!authToken) {
+      setIsAuthOpen(true);
+      return;
+    }
+    if (selectedLinks.size === 0) {
+      showToast('请先选择要处理的链接', 'warning');
+      return;
+    }
+    const parsedTags = normalizeTags(batchTagText.split(/[，,\n]/));
+    if (parsedTags.length === 0) {
+      showToast('请先输入标签，多个标签用逗号分隔', 'warning');
+      return;
+    }
+    const newLinks = links.map(link => selectedLinks.has(link.id) ? { ...link, tags: mergeTags(link.tags, batchTagText, remove) } : link);
+    updateData(newLinks, categories, categoryGroups);
+    setBatchTagText('');
+    showToast(remove ? '已批量移除标签' : '已批量添加标签', 'success');
+  };
+
   // --- Filtering & Memo ---
 
   const pinnedLinks = useMemo(() => {
       // Don't show pinned links if they belong to a locked category
-      const filteredPinnedLinks = links.filter(l => l.pinned && !isCategoryLocked(l.categoryId));
+      const filteredPinnedLinks = links.filter(l => !l.deletedAt && l.pinned && !isCategoryLocked(l.categoryId));
       // 按照pinnedOrder字段排序，如果没有pinnedOrder字段则按创建时间排序
       return filteredPinnedLinks.sort((a, b) => {
         // 如果有pinnedOrder字段，则使用pinnedOrder排序
@@ -533,7 +638,7 @@ function App() {
   }, [links, categories, unlockedCategoryIds]);
 
   const displayedLinks = useMemo(() => {
-    let result = links;
+    let result = links.filter(link => !link.deletedAt);
     
     // Security Filter: Always hide links from locked categories
     result = result.filter(l => !isCategoryLocked(l.categoryId));
@@ -541,11 +646,7 @@ function App() {
     // Search Filter
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(l => 
-        l.title.toLowerCase().includes(q) || 
-        l.url.toLowerCase().includes(q) ||
-        (l.description && l.description.toLowerCase().includes(q))
-      );
+      result = result.filter(l => matchesLinkQuery(l, searchQuery));
     }
 
     // Category Filter
@@ -574,6 +675,7 @@ function App() {
     
     // 获取其他目录中匹配的链接
     const otherLinks = links.filter(link => {
+      if (link.deletedAt) return false;
       // 排除当前目录的链接
       if (link.categoryId === selectedCategory) {
         return false;
@@ -585,11 +687,7 @@ function App() {
       }
       
       // 搜索匹配
-      return (
-        link.title.toLowerCase().includes(q) || 
-        link.url.toLowerCase().includes(q) ||
-        (link.description && link.description.toLowerCase().includes(q))
-      );
+      return matchesLinkQuery(link, searchQuery);
     });
 
     // 按目录分组
@@ -664,7 +762,7 @@ function App() {
     isBatchEditMode,
     requireAuth,
     onEditLink: (link) => { setEditingLink(link); setIsModalOpen(true); },
-    onDeleteLink: (linkId) => { const newLinks = links.filter(l => l.id !== linkId); updateData(newLinks, categories); },
+    onDeleteLink: (linkId) => { const now = Date.now(); const newLinks = links.map(l => l.id === linkId ? { ...l, deletedAt: now, deletedFromCategoryId: l.categoryId, pinned: false } : l); updateData(newLinks, categories, categoryGroups); },
     onTogglePin: togglePinFromLink,
   });
 
@@ -739,7 +837,8 @@ function App() {
         isOpen={isCatManagerOpen} 
         onClose={() => setIsCatManagerOpen(false)}
         categories={categories}
-        onUpdateCategories={handleUpdateCategories}
+        categoryGroups={categoryGroups}
+        onUpdateCategories={(newCategories, newCategoryGroups) => updateData(links, newCategories, newCategoryGroups || categoryGroups)}
         onDeleteCategory={handleDeleteCategory}
         onVerifyPassword={handleCategoryActionAuth}
       />
@@ -749,6 +848,7 @@ function App() {
         onClose={() => setIsBackupModalOpen(false)}
         links={links}
         categories={categories}
+        categoryGroups={categoryGroups}
         onRestore={handleRestoreBackup}
         webDavConfig={webDavConfig}
         onSaveWebDavConfig={handleSaveWebDavConfig}
@@ -779,9 +879,18 @@ function App() {
         onSave={handleSaveAIConfig}
         links={links}
         categories={categories}
-        onUpdateLinks={(newLinks) => updateData(newLinks, categories)}
+        onUpdateLinks={(newLinks) => updateData(newLinks, categories, categoryGroups)}
         authToken={authToken}
         onNotify={showToast}
+      />
+
+      <TrashModal
+        isOpen={isTrashModalOpen}
+        onClose={() => setIsTrashModalOpen(false)}
+        links={links}
+        categories={categories}
+        categoryGroups={categoryGroups}
+        onUpdateData={updateData}
       />
 
       <SearchConfigModal
@@ -839,37 +948,53 @@ function App() {
                </button>
             </div>
 
-            {categories.map(cat => {
-                const isLocked = isCategoryLocked(cat.id);
-                return (
+            {groupedCategories.map(group => {
+              const isCollapsed = collapsedGroupIds.has(group.id);
+              return (
+                <div key={group.id} className="space-y-1">
                   <button
-                    key={cat.id}
-                    onClick={() => handleCategoryClick(cat)}
-                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all group ${
-                      selectedCategory === cat.id 
-                        ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-medium' 
-                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'
-                    }`}
+                    onClick={() => toggleGroupCollapse(group.id)}
+                    className="w-full flex items-center gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                   >
-                    <div className={`p-1.5 rounded-lg transition-colors flex items-center justify-center ${selectedCategory === cat.id ? 'bg-blue-100 dark:bg-blue-800' : 'bg-slate-100 dark:bg-slate-800'}`}>
-                      {isLocked ? <Lock size={16} className="text-amber-500" /> : <Icon name={cat.icon} size={16} />}
-                    </div>
-                    <span className="truncate flex-1 text-left">{cat.name}</span>
-                    {requiresGlobalCategoryAuth(cat.id) && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
-                        需登录
-                      </span>
-                    )}
-                    {selectedCategory === cat.id && <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>}
+                    <Icon name={group.icon || 'Folder'} size={14} />
+                    <span className="truncate flex-1 text-left">{group.name}</span>
+                    <span className="text-[10px] rounded-full bg-slate-100 px-1.5 py-0.5 dark:bg-slate-700">{group.categories.length}</span>
+                    {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                   </button>
-                );
+                  {!isCollapsed && group.categories.map(cat => {
+                    const isLocked = isCategoryLocked(cat.id);
+                    return (
+                      <button
+                        key={cat.id}
+                        onClick={() => handleCategoryClick(cat)}
+                        className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all group ${
+                          selectedCategory === cat.id 
+                            ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-medium' 
+                            : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'
+                        }`}
+                      >
+                        <div className={`p-1.5 rounded-lg transition-colors flex items-center justify-center ${selectedCategory === cat.id ? 'bg-blue-100 dark:bg-blue-800' : 'bg-slate-100 dark:bg-slate-800'}`}>
+                          {isLocked ? <Lock size={16} className="text-amber-500" /> : <Icon name={cat.icon} size={16} />}
+                        </div>
+                        <span className="truncate flex-1 text-left">{cat.name}</span>
+                        {requiresGlobalCategoryAuth(cat.id) && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                            需登录
+                          </span>
+                        )}
+                        {selectedCategory === cat.id && <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
             })}
         </div>
 
         {/* Footer Actions */}
         <div className="p-4 border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 shrink-0">
             
-            <div className="grid grid-cols-3 gap-2 mb-2">
+            <div className="grid grid-cols-4 gap-2 mb-2">
                 <button 
                     onClick={() => { if(!authToken) setIsAuthOpen(true); else setIsImportModalOpen(true); }}
                     className="flex flex-col items-center justify-center gap-1 p-2 text-xs text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-600 transition-all"
@@ -886,6 +1011,15 @@ function App() {
                 >
                     <CloudCog size={14} />
                     <span>备份</span>
+                </button>
+
+                <button 
+                    onClick={() => { if(!authToken) setIsAuthOpen(true); else setIsTrashModalOpen(true); }}
+                    className="flex flex-col items-center justify-center gap-1 p-2 text-xs text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-600 transition-all"
+                    title="回收站"
+                >
+                    <Trash2 size={14} />
+                    <span>回收</span>
                 </button>
 
                 <button 
@@ -1325,7 +1459,7 @@ function App() {
                                                   <span>批量移动</span>
                                               </button>
                                               <div className="absolute top-full right-0 mt-1 w-48 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 z-20 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
-                                                  {categories.filter(cat => cat.id !== selectedCategory).map(cat => (
+                                                  {categories.filter(cat => !cat.deletedAt && cat.id !== selectedCategory).map(cat => (
                                                       <button
                                                           key={cat.id}
                                                           onClick={() => handleBatchMove(cat.id)}
@@ -1335,6 +1469,17 @@ function App() {
                                                       </button>
                                                   ))}
                                               </div>
+                                          </div>
+                                          <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1 dark:border-slate-700 dark:bg-slate-800">
+                                              <Tag size={13} className="text-slate-400" />
+                                              <input
+                                                  value={batchTagText}
+                                                  onChange={(event) => setBatchTagText(event.target.value)}
+                                                  placeholder="标签"
+                                                  className="w-24 bg-transparent text-xs outline-none dark:text-slate-200"
+                                              />
+                                              <button onClick={() => handleBatchTagChange(false)} className="text-xs text-blue-600 hover:text-blue-700">添加</button>
+                                              <button onClick={() => handleBatchTagChange(true)} className="text-xs text-red-500 hover:text-red-600">移除</button>
                                           </div>
                                      </>
                                  ) : (

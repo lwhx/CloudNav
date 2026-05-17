@@ -1,15 +1,16 @@
 import React, { useState, useRef } from 'react';
 import { X, Upload, FileText, ArrowRight, Check, AlertCircle, FolderInput, ListTree, Database } from 'lucide-react';
-import { Category, LinkItem, SearchConfig, AIConfig, WebDavConfig } from '../types';
+import { Category, CategoryGroup, LinkItem, SearchConfig, AIConfig, WebDavConfig } from '../types';
 import { parseBookmarks } from '../services/bookmarkParser';
 import { NotifyHandler } from '../hooks/useToast';
+import { parseAppDataPayload } from '../services/appDataPersistence';
 
 interface ImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   existingLinks: LinkItem[];
   categories: Category[];
-  onImport: (newLinks: LinkItem[], newCategories: Category[]) => void;
+  onImport: (newLinks: LinkItem[], newCategories: Category[], newCategoryGroups?: CategoryGroup[]) => void;
   onImportSearchConfig?: (searchConfig: SearchConfig) => void;
   onImportAIConfig?: (aiConfig: AIConfig) => void;
   onImportWebDavConfig?: (webDavConfig: WebDavConfig) => void;
@@ -42,6 +43,7 @@ const ImportModal: React.FC<ImportModalProps> = ({
   const [parsedSearchConfig, setParsedSearchConfig] = useState<SearchConfig | null>(null);
   const [parsedAIConfig, setParsedAIConfig] = useState<AIConfig | null>(null);
   const [parsedWebDavConfig, setParsedWebDavConfig] = useState<WebDavConfig | null>(null);
+  const [parsedCategoryGroups, setParsedCategoryGroups] = useState<CategoryGroup[]>([]);
   
   // Options
   const [importMode, setImportMode] = useState<'original' | 'merge'>('original');
@@ -53,18 +55,17 @@ const ImportModal: React.FC<ImportModalProps> = ({
   const jsonFileInputRef = useRef<HTMLInputElement>(null);
 
   // Parse JSON backup file
-  const parseJsonBackup = async (file: File): Promise<{ links: LinkItem[], categories: Category[], searchConfig?: SearchConfig, aiConfig?: AIConfig, webDavConfig?: WebDavConfig }> => {
+  const parseJsonBackup = async (file: File): Promise<{ links: LinkItem[], categories: Category[], categoryGroups?: CategoryGroup[], searchConfig?: SearchConfig, aiConfig?: AIConfig, webDavConfig?: WebDavConfig }> => {
     const text = await file.text();
     const data = JSON.parse(text);
-    
-    // Validate the structure
-    if (!data.links || !Array.isArray(data.links) || !data.categories || !Array.isArray(data.categories)) {
+    const normalized = parseAppDataPayload(data);
+    if (!normalized) {
       throw new Error('Invalid backup file format');
     }
-    
     return {
-      links: data.links,
-      categories: data.categories,
+      links: normalized.links,
+      categories: normalized.categories,
+      categoryGroups: normalized.categoryGroups,
       searchConfig: data.searchConfig,
       aiConfig: data.aiConfig,
       webDavConfig: data.webDavConfig
@@ -81,6 +82,7 @@ const ImportModal: React.FC<ImportModalProps> = ({
     setParsedSearchConfig(null);
     setParsedAIConfig(null);
     setParsedWebDavConfig(null);
+    setParsedCategoryGroups([]);
     setNewLinksCount(0);
     setDuplicateCount(0);
     setNewCategoriesCount(0);
@@ -102,7 +104,7 @@ const ImportModal: React.FC<ImportModalProps> = ({
     setImportType(type);
 
     try {
-        let result: { links: LinkItem[], categories: Category[], searchConfig?: SearchConfig, aiConfig?: AIConfig, webDavConfig?: WebDavConfig };
+        let result: { links: LinkItem[], categories: Category[], categoryGroups?: CategoryGroup[], searchConfig?: SearchConfig, aiConfig?: AIConfig, webDavConfig?: WebDavConfig };
         
         if (type === 'html') {
             result = await parseBookmarks(selectedFile);
@@ -127,13 +129,14 @@ const ImportModal: React.FC<ImportModalProps> = ({
 
         // 3. Category Diff
         const existingCategoryNames = new Set(categories.map(c => c.name));
-        const uniqueNewCategories = result.categories.filter(c => !existingCategoryNames.has(c.name));
+        const uniqueNewCategories = result.categories.filter(c => !existingCategoryNames.has(c.name) || c.deletedAt);
 
         setParsedLinks(uniqueNewLinks);
         setParsedCategories(uniqueNewCategories);
         setParsedSearchConfig(result.searchConfig || null);
         setParsedAIConfig(result.aiConfig || null);
         setParsedWebDavConfig(result.webDavConfig || null);
+        setParsedCategoryGroups(result.categoryGroups || []);
         setNewLinksCount(uniqueNewLinks.length);
         setDuplicateCount(duplicates);
         setNewCategoriesCount(uniqueNewCategories.length);
@@ -175,6 +178,10 @@ const ImportModal: React.FC<ImportModalProps> = ({
           const categoriesToAdd: Category[] = [];
 
           parsedCategories.forEach(pc => {
+              if (pc.deletedAt) {
+                  categoriesToAdd.push(pc);
+                  return;
+              }
               if (nameToIdMap.has(pc.name)) {
                   // Category exists, we don't add it.
                   // But we need to know its ID to remap links.
@@ -200,7 +207,7 @@ const ImportModal: React.FC<ImportModalProps> = ({
           finalCategories = categoriesToAdd;
       }
 
-      onImport(finalLinks, finalCategories);
+      onImport(finalLinks, finalCategories, parsedCategoryGroups);
       
       // Import search config if available
       if (parsedSearchConfig && onImportSearchConfig) {
@@ -349,7 +356,7 @@ const ImportModal: React.FC<ImportModalProps> = ({
                                             onClick={(e) => e.stopPropagation()}
                                             className="w-full text-sm p-2 rounded border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white outline-none"
                                         >
-                                            {categories.map(c => (
+                                            {categories.filter(c => !c.deletedAt).map(c => (
                                                 <option key={c.id} value={c.id}>{c.name}</option>
                                             ))}
                                         </select>

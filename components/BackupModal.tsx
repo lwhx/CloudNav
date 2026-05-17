@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Cloud, Download, Upload, CheckCircle2, AlertCircle, RefreshCw, Save } from 'lucide-react';
-import { Category, LinkItem, WebDavConfig, SearchConfig, AIConfig } from '../types';
+import { Category, CategoryGroup, LinkItem, WebDavConfig, SearchConfig, AIConfig } from '../types';
 import { createAppDataEnvelope, getLocalDataBackups } from '../services/appDataPersistence';
 import { checkWebDavConnection, uploadBackup, uploadBackupWithTimestamp, downloadBackup } from '../services/webDavService';
 import { generateBookmarkHtml, downloadHtmlFile } from '../services/exportService';
@@ -10,7 +10,8 @@ interface BackupModalProps {
   onClose: () => void;
   links: LinkItem[];
   categories: Category[];
-  onRestore: (links: LinkItem[], categories: Category[]) => void;
+  categoryGroups: CategoryGroup[];
+  onRestore: (links: LinkItem[], categories: Category[], categoryGroups?: CategoryGroup[]) => void;
   webDavConfig: WebDavConfig;
   onSaveWebDavConfig: (config: WebDavConfig) => void;
   onRestoreWebDavConfig: (config: WebDavConfig) => void;
@@ -21,7 +22,7 @@ interface BackupModalProps {
 }
 
 const BackupModal: React.FC<BackupModalProps> = ({ 
-  isOpen, onClose, links, categories, onRestore, webDavConfig, onSaveWebDavConfig, onRestoreWebDavConfig, searchConfig, onRestoreSearchConfig, aiConfig, onRestoreAIConfig 
+  isOpen, onClose, links, categories, categoryGroups, onRestore, webDavConfig, onSaveWebDavConfig, onRestoreWebDavConfig, searchConfig, onRestoreSearchConfig, aiConfig, onRestoreAIConfig 
 }) => {
   const [config, setConfig] = useState<WebDavConfig>(webDavConfig);
   const [isTesting, setIsTesting] = useState(false);
@@ -34,7 +35,7 @@ const BackupModal: React.FC<BackupModalProps> = ({
   const [localBackups, setLocalBackups] = useState(() => getLocalDataBackups());
 
   const buildBackupPayload = () => ({
-    ...createAppDataEnvelope(links, categories),
+    ...createAppDataEnvelope(links, categories, categoryGroups),
     searchConfig,
     aiConfig,
     ...(includeWebDavConfig ? { webDavConfig: config } : {})
@@ -104,7 +105,7 @@ const BackupModal: React.FC<BackupModalProps> = ({
     const data = await downloadBackup(config);
     
     if (data.success !== false && data.links && data.categories) {
-        onRestore(data.links, data.categories);
+        onRestore(data.links, data.categories, data.categoryGroups);
         // 恢复搜索配置（如果存在）
         if (data.searchConfig) {
             onRestoreSearchConfig(data.searchConfig);
@@ -308,7 +309,7 @@ const BackupModal: React.FC<BackupModalProps> = ({
                                 type="button"
                                 onClick={() => {
                                     if (confirm('确定恢复这份本地快照吗？当前数据会被覆盖。')) {
-                                        onRestore(backup.links, backup.categories);
+                                        onRestore(backup.links, backup.categories, backup.categoryGroups);
                                         setLocalBackups(getLocalDataBackups());
                                     }
                                 }}

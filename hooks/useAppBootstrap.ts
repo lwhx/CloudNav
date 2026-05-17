@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { AIConfig, Category, DEFAULT_CATEGORIES, LinkItem, SearchConfig, SiteSettings, WebDavConfig } from '../types';
+import { AIConfig, Category, CategoryGroup, DEFAULT_CATEGORIES, DEFAULT_CATEGORY_GROUP, LinkItem, SearchConfig, SiteSettings, WebDavConfig } from '../types';
 import { createDefaultSearchSources } from './useSearchConfig';
 import { saveLocalAppData } from '../services/appDataPersistence';
 
@@ -20,6 +20,7 @@ interface UseAppBootstrapOptions {
   clearAuthSession: () => void;
   setLinks: (links: LinkItem[]) => void;
   setCategories: (categories: Category[]) => void;
+  setCategoryGroups: (categoryGroups: CategoryGroup[]) => void;
   loadFromLocal: () => void;
   loadLinkIcons: (links: LinkItem[], categories: Category[], token?: string) => void;
   setSearchMode: (mode: 'internal' | 'external') => void;
@@ -44,6 +45,7 @@ export const useAppBootstrap = ({
   clearAuthSession,
   setLinks,
   setCategories,
+  setCategoryGroups,
   loadFromLocal,
   loadLinkIcons,
   setSearchMode,
@@ -152,9 +154,11 @@ export const useAppBootstrap = ({
           if (Array.isArray(data.links) || Array.isArray(data.categories)) {
             const cloudLinks = Array.isArray(data.links) ? data.links : [];
             const cloudCategories = Array.isArray(data.categories) ? data.categories : DEFAULT_CATEGORIES;
+            const cloudCategoryGroups = Array.isArray(data.categoryGroups) ? data.categoryGroups : [DEFAULT_CATEGORY_GROUP];
             setLinks(cloudLinks);
             setCategories(cloudCategories);
-            saveLocalAppData(cloudLinks, cloudCategories);
+            setCategoryGroups(cloudCategoryGroups);
+            saveLocalAppData(cloudLinks, cloudCategories, cloudCategoryGroups);
             loadLinkIcons(cloudLinks, cloudCategories, activeToken || undefined);
             hasCloudData = true;
           }

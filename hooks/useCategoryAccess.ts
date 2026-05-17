@@ -76,7 +76,8 @@ export const useCategoryAccess = ({
       return;
     }
 
-    let newCats = categories.filter(c => c.id !== catId);
+    const now = Date.now();
+    let newCats = categories.map(c => c.id === catId ? { ...c, deletedAt: now } : c);
 
     if (!newCats.some(c => c.id === 'common')) {
       newCats = [
@@ -85,7 +86,7 @@ export const useCategoryAccess = ({
       ];
     }
 
-    const newLinks = links.map(l => l.categoryId === catId ? { ...l, categoryId: 'common' } : l);
+    const newLinks = links.map(l => l.categoryId === catId && !l.deletedAt ? { ...l, categoryId: 'common' } : l);
     updateData(newLinks, newCats);
   }, [categories, links, requireAuth, showToast, updateData]);
 

@@ -67,7 +67,8 @@ export const useLinkOrganizer = ({
     }
 
     if (confirm(`确定要删除选中的 ${selectedLinks.size} 个链接吗？`)) {
-      const newLinks = links.filter(link => !selectedLinks.has(link.id));
+      const now = Date.now();
+      const newLinks = links.map(link => selectedLinks.has(link.id) ? { ...link, deletedAt: now, deletedFromCategoryId: link.categoryId, pinned: false } : link);
       updateData(newLinks, categories);
       setSelectedLinks(new Set());
       setIsBatchEditMode(false);
@@ -267,7 +268,8 @@ export const useLinkOrganizer = ({
       return;
     }
     if (confirm('确定删除此链接吗?')) {
-      updateData(links.filter(l => l.id !== id), categories);
+      const now = Date.now();
+      updateData(links.map(l => l.id === id ? { ...l, deletedAt: now, deletedFromCategoryId: l.categoryId, pinned: false } : l), categories);
     }
   }, [authToken, categories, links, setIsAuthOpen, updateData]);
 

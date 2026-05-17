@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Sparkles, Loader2, Pin, Wand2, Trash2 } from 'lucide-react';
 import { LinkItem, Category, AIConfig } from '../types';
+import { normalizeTags } from '../services/appDataPersistence';
 import { NotifyHandler } from '../hooks/useToast';
 
 interface LinkModalProps {
@@ -15,12 +16,16 @@ interface LinkModalProps {
   onNotify?: NotifyHandler;
 }
 
+const parseTagInput = (value: string) => normalizeTags(value.split(/[，,\n]/));
+
 const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete, categories, initialData, aiConfig, defaultCategoryId, onNotify }) => {
   const [title, setTitle] = useState('');
   const [url, setUrl] = useState('');
   const [description, setDescription] = useState('');
   const [categoryId, setCategoryId] = useState(categories[0]?.id || 'common');
   const [pinned, setPinned] = useState(false);
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
   const [icon, setIcon] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isFetchingIcon, setIsFetchingIcon] = useState(false);
@@ -61,6 +66,8 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
         setDescription(initialData.description || '');
         setCategoryId(initialData.categoryId);
         setPinned(initialData.pinned || false);
+        setTags(normalizeTags(initialData.tags));
+        setTagInput('');
         setIcon(initialData.icon || '');
       } else {
         setTitle('');
@@ -70,6 +77,8 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
         const defaultCategory = defaultCategoryId && categories.find(cat => cat.id === defaultCategoryId);
         setCategoryId(defaultCategory ? defaultCategoryId : (categories[0]?.id || 'common'));
         setPinned(false);
+        setTags([]);
+        setTagInput('');
         setIcon('');
       }
     }
@@ -105,6 +114,24 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     if (!initialData) return;
     onDelete && onDelete(initialData.id);
     onClose();
+  };
+
+  const commitTagInput = () => {
+    const nextTags = parseTagInput(tagInput);
+    if (nextTags.length === 0) return;
+    setTags(prev => normalizeTags([...prev, ...nextTags]));
+    setTagInput('');
+  };
+
+  const removeTag = (targetTag: string) => {
+    setTags(prev => prev.filter(tag => tag.toLowerCase() !== targetTag.toLowerCase()));
+  };
+
+  const handleTagKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter' || event.key === ',') {
+      event.preventDefault();
+      commitTagInput();
+    }
   };
 
   // 缓存自定义图标到KV空间
@@ -171,7 +198,8 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
       icon: finalIcon,
       description,
       categoryId,
-      pinned
+      pinned,
+      tags: normalizeTags([...tags, ...parseTagInput(tagInput)])
     });
     
     // 批量模式下不关闭窗口，只显示成功提示
@@ -187,6 +215,8 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
       setIcon('');
       setDescription('');
       setPinned(false);
+      setTags([]);
+      setTagInput('');
     } else {
       onClose();
     }
@@ -203,14 +233,11 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     
     // Parallel execution for speed
     try {
-        const { generateLinkDescription, suggestCategory } = await import('../services/geminiService');
-        const descPromise = generateLinkDescription(title, url, aiConfig);
-        const catPromise = suggestCategory(title, url, categories, aiConfig);
-        
-        const [desc, cat] = await Promise.all([descPromise, catPromise]);
-        
-        if (desc) setDescription(desc);
-        if (cat) setCategoryId(cat);
+        const { organizeLink } = await import('../services/geminiService');
+        const result = await organizeLink(title, url, description, categories.filter(category => !category.deletedAt), tags, aiConfig);
+        if (result.description) setDescription(result.description);
+        if (result.categoryId && categories.some(category => !category.deletedAt && category.id === result.categoryId)) setCategoryId(result.categoryId);
+        if (result.tags?.length) setTags(prev => normalizeTags([...prev, ...result.tags!].slice(0, 8)));
         
     } catch (e) {
         console.error("AI Assist failed", e);
@@ -492,10 +519,36 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
             onChange={(e) => setCategoryId(e.target.value)}
             className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
             >
-            {categories.map(cat => (
+            {categories.filter(cat => !cat.deletedAt).map(cat => (
                 <option key={cat.id} value={cat.id}>{cat.name}</option>
             ))}
             </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1 dark:text-slate-300">标签</label>
+            <div className="flex flex-wrap gap-2 rounded-lg border border-slate-300 p-2 dark:border-slate-600 dark:bg-slate-700">
+              {tags.map(tag => (
+                <button
+                  type="button"
+                  key={tag}
+                  onClick={() => removeTag(tag)}
+                  className="rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-300"
+                  title="点击移除标签"
+                >
+                  #{tag} ×
+                </button>
+              ))}
+              <input
+                value={tagInput}
+                onChange={(event) => setTagInput(event.target.value)}
+                onKeyDown={handleTagKeyDown}
+                onBlur={commitTagInput}
+                placeholder="输入标签后回车"
+                className="min-w-[120px] flex-1 bg-transparent text-sm outline-none dark:text-white"
+              />
+            </div>
+            <p className="mt-1 text-xs text-slate-400">最多 8 个标签，支持逗号或回车添加。</p>
           </div>
 
           <div className="pt-2 relative">

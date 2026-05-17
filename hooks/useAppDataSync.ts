@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Category, DEFAULT_CATEGORIES, INITIAL_LINKS, LinkItem } from '../types';
-import { createAppDataEnvelope, loadLocalAppData, saveLocalAppData } from '../services/appDataPersistence';
+import { Category, CategoryGroup, DEFAULT_CATEGORIES, DEFAULT_CATEGORY_GROUP, INITIAL_LINKS, LinkItem } from '../types';
+import { createAppDataEnvelope, loadLocalAppData, normalizeAppData, saveLocalAppData } from '../services/appDataPersistence';
 
 type SyncStatus = 'idle' | 'saving' | 'saved' | 'error' | 'offline';
 
@@ -18,63 +18,46 @@ const SYNC_DEBOUNCE_MS = 800;
 type PendingSyncPayload = {
   links: LinkItem[];
   categories: Category[];
+  categoryGroups: CategoryGroup[];
   token: string;
-};
-
-const normalizeLocalData = (links: LinkItem[], categories: Category[]) => {
-  let loadedCategories = categories;
-
-  if (!loadedCategories.some(c => c.id === 'common')) {
-    const commonCategory = DEFAULT_CATEGORIES.find(category => category.id === 'common') || {
-      id: 'common',
-      name: 'Common',
-      icon: 'Star',
-    };
-    loadedCategories = [commonCategory, ...loadedCategories];
-  } else {
-    const commonIndex = loadedCategories.findIndex(c => c.id === 'common');
-    if (commonIndex > 0) {
-      const commonCategory = loadedCategories[commonIndex];
-      loadedCategories = [
-        commonCategory,
-        ...loadedCategories.slice(0, commonIndex),
-        ...loadedCategories.slice(commonIndex + 1),
-      ];
-    }
-  }
-
-  const validCategoryIds = new Set(loadedCategories.map(c => c.id));
-  const loadedLinks = links.map(link => {
-    if (!validCategoryIds.has(link.categoryId)) {
-      return { ...link, categoryId: 'common' };
-    }
-    return link;
-  });
-
-  return { links: loadedLinks, categories: loadedCategories };
 };
 
 export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onSyncError }: UseAppDataSyncOptions) => {
   const [links, setLinks] = useState<LinkItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [categoryGroups, setCategoryGroups] = useState<CategoryGroup[]>([DEFAULT_CATEGORY_GROUP]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const debounceTimerRef = useRef<number | null>(null);
   const pendingSyncRef = useRef<PendingSyncPayload | null>(null);
   const isSyncingRef = useRef(false);
 
+  const applyData = useCallback((newLinks: LinkItem[], newCategories: Category[], newCategoryGroups?: CategoryGroup[]) => {
+    const normalized = normalizeAppData({
+      links: newLinks,
+      categories: newCategories,
+      categoryGroups: newCategoryGroups || categoryGroups,
+    });
+    setLinks(normalized.links);
+    setCategories(normalized.categories);
+    setCategoryGroups(normalized.categoryGroups || [DEFAULT_CATEGORY_GROUP]);
+    return normalized;
+  }, [categoryGroups]);
+
   const loadFromLocal = useCallback(() => {
     try {
       const stored = loadLocalAppData();
-      const normalized = normalizeLocalData(stored.links || INITIAL_LINKS, stored.categories || DEFAULT_CATEGORIES);
-      setLinks(normalized.links);
-      setCategories(normalized.categories);
+      applyData(stored.links || INITIAL_LINKS, stored.categories || DEFAULT_CATEGORIES, stored.categoryGroups);
     } catch {
-      setLinks(INITIAL_LINKS);
-      setCategories(DEFAULT_CATEGORIES);
+      applyData(INITIAL_LINKS, DEFAULT_CATEGORIES, [DEFAULT_CATEGORY_GROUP]);
     }
-  }, []);
+  }, [applyData]);
 
-  const syncToCloud = useCallback(async (newLinks: LinkItem[], newCategories: Category[], token: string) => {
+  const syncToCloud = useCallback(async (
+    newLinks: LinkItem[],
+    newCategories: Category[],
+    token: string,
+    newCategoryGroups?: CategoryGroup[],
+  ) => {
     setSyncStatus('saving');
     try {
       const response = await fetch('/api/storage', {
@@ -82,7 +65,7 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
         headers: buildAuthHeaders(token, {
           'Content-Type': 'application/json',
         }),
-        body: JSON.stringify(createAppDataEnvelope(newLinks, newCategories)),
+        body: JSON.stringify(createAppDataEnvelope(newLinks, newCategories, newCategoryGroups || categoryGroups)),
       });
 
       if (response.status === 401) {
@@ -104,33 +87,27 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
       onSyncError();
       return false;
     }
-  }, [buildAuthHeaders, onAuthExpired, onSyncError]);
+  }, [buildAuthHeaders, categoryGroups, onAuthExpired, onSyncError]);
 
   const flushSyncQueue = useCallback(async () => {
-    if (isSyncingRef.current || !pendingSyncRef.current) {
-      return;
-    }
+    if (isSyncingRef.current || !pendingSyncRef.current) return;
 
     const payload = pendingSyncRef.current;
     pendingSyncRef.current = null;
     isSyncingRef.current = true;
 
     try {
-      await syncToCloud(payload.links, payload.categories, payload.token);
+      await syncToCloud(payload.links, payload.categories, payload.token, payload.categoryGroups);
     } finally {
       isSyncingRef.current = false;
-      if (pendingSyncRef.current) {
-        void flushSyncQueue();
-      }
+      if (pendingSyncRef.current) void flushSyncQueue();
     }
   }, [syncToCloud]);
 
-  const scheduleSync = useCallback((newLinks: LinkItem[], newCategories: Category[], token: string) => {
-    pendingSyncRef.current = { links: newLinks, categories: newCategories, token };
+  const scheduleSync = useCallback((newLinks: LinkItem[], newCategories: Category[], token: string, newCategoryGroups: CategoryGroup[]) => {
+    pendingSyncRef.current = { links: newLinks, categories: newCategories, categoryGroups: newCategoryGroups, token };
 
-    if (debounceTimerRef.current) {
-      window.clearTimeout(debounceTimerRef.current);
-    }
+    if (debounceTimerRef.current) window.clearTimeout(debounceTimerRef.current);
 
     debounceTimerRef.current = window.setTimeout(() => {
       debounceTimerRef.current = null;
@@ -138,15 +115,15 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
     }, SYNC_DEBOUNCE_MS);
   }, [flushSyncQueue]);
 
-  const updateData = useCallback((newLinks: LinkItem[], newCategories: Category[]) => {
-    setLinks(newLinks);
-    setCategories(newCategories);
-    saveLocalAppData(newLinks, newCategories);
+  const updateData = useCallback((newLinks: LinkItem[], newCategories: Category[], newCategoryGroups?: CategoryGroup[]) => {
+    const normalized = applyData(newLinks, newCategories, newCategoryGroups);
+    const normalizedGroups = normalized.categoryGroups || [DEFAULT_CATEGORY_GROUP];
+    saveLocalAppData(normalized.links, normalized.categories, normalizedGroups);
 
     if (authToken) {
-      scheduleSync(newLinks, newCategories, authToken);
+      scheduleSync(normalized.links, normalized.categories, authToken, normalizedGroups);
     }
-  }, [authToken, scheduleSync]);
+  }, [applyData, authToken, scheduleSync]);
 
   const loadLinkIcons = useCallback(async (linksToLoad: LinkItem[], categoriesToUse: Category[], token?: string) => {
     const activeToken = token || authToken;
@@ -156,19 +133,15 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
     const domainsToFetch = new Set<string>();
 
     for (const link of updatedLinks) {
-      if (link.url) {
+      if (link.url && !link.deletedAt) {
         try {
           let domain = link.url;
-          if (!link.url.startsWith('http://') && !link.url.startsWith('https://')) {
-            domain = 'https://' + link.url;
-          }
+          if (!link.url.startsWith('http://') && !link.url.startsWith('https://')) domain = 'https://' + link.url;
 
           if (domain.startsWith('http://') || domain.startsWith('https://')) {
             const urlObj = new URL(domain);
             domain = urlObj.hostname;
-            if (!link.icon || !link.icon.startsWith('data:')) {
-              domainsToFetch.add(domain);
-            }
+            if (!link.icon || !link.icon.startsWith('data:')) domainsToFetch.add(domain);
           }
         } catch (e) {
           console.error('Failed to parse URL for icon loading', e);
@@ -183,9 +156,7 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
         const response = await fetch(`/api/storage?getConfig=favicon&domain=${encodeURIComponent(domain)}&fetch=true`);
         if (response.ok) {
           const data = await response.json();
-          if (data.cached && data.icon) {
-            return { domain, icon: data.icon };
-          }
+          if (data.cached && data.icon) return { domain, icon: data.icon };
         }
       } catch (error) {
         console.log(`Failed to fetch cached icon for ${domain}`, error);
@@ -204,18 +175,11 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
 
         try {
           let domain = linkToUpdate.url;
-          if (!linkToUpdate.url.startsWith('http://') && !linkToUpdate.url.startsWith('https://')) {
-            domain = 'https://' + linkToUpdate.url;
-          }
-
-          if (!domain.startsWith('http://') && !domain.startsWith('https://')) {
-            return;
-          }
+          if (!linkToUpdate.url.startsWith('http://') && !linkToUpdate.url.startsWith('https://')) domain = 'https://' + linkToUpdate.url;
+          if (!domain.startsWith('http://') && !domain.startsWith('https://')) return;
 
           const urlObj = new URL(domain);
-          if (urlObj.hostname !== result.domain) {
-            return;
-          }
+          if (urlObj.hostname !== result.domain) return;
 
           if (linkToUpdate.icon !== result.icon) {
             linkToUpdate.icon = result.icon;
@@ -228,16 +192,14 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
     });
 
     if (hasChanges) {
-      setLinks(updatedLinks);
-      saveLocalAppData(updatedLinks, categoriesToUse);
-      scheduleSync(updatedLinks, categoriesToUse, activeToken);
+      const normalized = applyData(updatedLinks, categoriesToUse, categoryGroups);
+      saveLocalAppData(normalized.links, normalized.categories, normalized.categoryGroups);
+      scheduleSync(normalized.links, normalized.categories, activeToken, normalized.categoryGroups || [DEFAULT_CATEGORY_GROUP]);
     }
-  }, [authToken, scheduleSync]);
+  }, [applyData, authToken, categoryGroups, scheduleSync]);
 
   useEffect(() => () => {
-    if (debounceTimerRef.current) {
-      window.clearTimeout(debounceTimerRef.current);
-    }
+    if (debounceTimerRef.current) window.clearTimeout(debounceTimerRef.current);
   }, []);
 
   return {
@@ -245,6 +207,8 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
     setLinks,
     categories,
     setCategories,
+    categoryGroups,
+    setCategoryGroups,
     syncStatus,
     setSyncStatus,
     loadFromLocal,

@@ -21,6 +21,23 @@ const LinkCard = ({
   onEdit,
 }: LinkCardProps) => {
   const isDetailedView = siteSettings.cardStyle === 'detailed';
+  const visibleTags = (link.tags || []).slice(0, 3);
+  const hiddenTagCount = Math.max((link.tags || []).length - visibleTags.length, 0);
+
+  const tagChips = visibleTags.length > 0 && (
+    <div className={`flex flex-wrap gap-1 ${isDetailedView ? 'mt-2' : 'ml-2 max-w-[45%]'}`}>
+      {visibleTags.map(tag => (
+        <span key={tag} className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
+          #{tag}
+        </span>
+      ))}
+      {hiddenTagCount > 0 && (
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+          +{hiddenTagCount}
+        </span>
+      )}
+    </div>
+  );
 
   const content = (
     <>
@@ -41,6 +58,7 @@ const LinkCard = ({
           {link.description}
         </p>
       )}
+      {tagChips}
     </>
   );
 
