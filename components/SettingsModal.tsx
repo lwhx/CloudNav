@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Bot, Key, Globe, Sparkles, PauseCircle, Wrench, Box, Copy, Check, LayoutTemplate, Info, Download, Sidebar, Keyboard, MousePointerClick, AlertTriangle, Package, Zap, Menu, Upload } from 'lucide-react';
-import { AIConfig, LinkItem, Category, SiteSettings } from '../types';
+import { AIConfig, LinkItem, Category, SiteSettings, AICategorySuggestion } from '../types';
 import { normalizeTags } from '../services/appDataPersistence';
 import JSZip from 'jszip';
 import { NotifyHandler } from '../hooks/useToast';
@@ -14,13 +14,14 @@ interface SettingsModalProps {
   links: LinkItem[];
   categories: Category[];
   onUpdateLinks: (links: LinkItem[]) => void;
+  onApplyCategorySuggestions?: (suggestions: AICategorySuggestion[]) => void;
   authToken: string | null;
   onNotify?: NotifyHandler;
 }
 
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ 
-    isOpen, onClose, config, siteSettings, onSave, links, categories, onUpdateLinks, authToken, onNotify 
+    isOpen, onClose, config, siteSettings, onSave, links, categories, onUpdateLinks, onApplyCategorySuggestions, authToken, onNotify 
 }) => {
   const [activeTab, setActiveTab] = useState<'site' | 'ai' | 'tools'>('site');
   const [localConfig, setLocalConfig] = useState<AIConfig>(config);
@@ -35,6 +36,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   }));
   
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSuggestingCategories, setIsSuggestingCategories] = useState(false);
+  const [categorySuggestions, setCategorySuggestions] = useState<AICategorySuggestion[]>([]);
   const [organizeOptions, setOrganizeOptions] = useState({ description: true, category: true, tags: true });
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const shouldStopRef = useRef(false);
@@ -61,6 +64,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       setLocalSiteSettings(safeSettings);
 
       setIsProcessing(false);
+      setIsSuggestingCategories(false);
+      setCategorySuggestions([]);
       setIsZipping(false);
       setProgress({ current: 0, total: 0 });
       shouldStopRef.current = false;
@@ -193,6 +198,39 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     setIsProcessing(false);
     const stopMessage = shouldStopRef.current ? 'AI 批量整理已停止，已保存完成部分' : 'AI 批量整理完成';
     onNotify?.(failedCount > 0 ? `${stopMessage}，失败 ${failedCount} 条` : stopMessage, shouldStopRef.current || failedCount > 0 ? 'warning' : 'success');
+  };
+
+  const handleSuggestCategories = async () => {
+    if (!localConfig.apiKey) {
+        onNotify?.('请先配置并保存 API Key', 'warning');
+        return;
+    }
+    const activeLinks = links.filter(link => !link.deletedAt);
+    if (activeLinks.length < 2) {
+        onNotify?.('链接数量不足，暂时无法生成分类建议', 'info');
+        return;
+    }
+
+    setIsSuggestingCategories(true);
+    setCategorySuggestions([]);
+    try {
+        const { suggestCategoryStructure } = await import('../services/geminiService');
+        const suggestions = await suggestCategoryStructure(activeLinks, categories.filter(category => !category.deletedAt), localConfig);
+        setCategorySuggestions(suggestions);
+        onNotify?.(suggestions.length ? `已生成 ${suggestions.length} 个分类建议` : '暂无合适的新分类建议', suggestions.length ? 'success' : 'info');
+    } catch (error) {
+        console.error('AI category suggestion failed', error);
+        onNotify?.('AI 分类建议生成失败', 'error');
+    } finally {
+        setIsSuggestingCategories(false);
+    }
+  };
+
+  const handleApplySuggestions = () => {
+    if (!categorySuggestions.length) return;
+    if (!confirm(`确定创建 ${categorySuggestions.length} 个建议分类，并移动对应链接吗？`)) return;
+    onApplyCategorySuggestions?.(categorySuggestions);
+    setCategorySuggestions([]);
   };
 
   const handleCopy = (text: string, key: string) => {

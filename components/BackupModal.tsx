@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Cloud, Download, Upload, CheckCircle2, AlertCircle, RefreshCw, Save } from 'lucide-react';
 import { Category, CategoryGroup, LinkItem, WebDavConfig, SearchConfig, AIConfig } from '../types';
-import { createAppDataEnvelope, getLocalDataBackups } from '../services/appDataPersistence';
+import { createAppDataEnvelope, getLocalDataBackups, deleteLocalDataBackup, clearLocalDataBackups, createManualLocalBackup } from '../services/appDataPersistence';
 import { checkWebDavConnection, uploadBackup, uploadBackupWithTimestamp, downloadBackup } from '../services/webDavService';
 import { generateBookmarkHtml, downloadHtmlFile } from '../services/exportService';
 
@@ -143,6 +143,29 @@ const BackupModal: React.FC<BackupModalProps> = ({
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const handleCreateManualBackup = () => {
+    const backups = createManualLocalBackup(links, categories, categoryGroups);
+    setLocalBackups(backups);
+    setSyncStatus('success');
+    setStatusMsg('已创建本地手动快照');
+  };
+
+  const handleRestoreLocalBackup = (backup: ReturnType<typeof getLocalDataBackups>[number]) => {
+    if (!confirm('确定恢复这份本地快照吗？当前数据会被覆盖。')) return;
+    onRestore(backup.links, backup.categories, backup.categoryGroups);
+    setLocalBackups(getLocalDataBackups());
+  };
+
+  const handleDeleteLocalBackup = (capturedAt: number) => {
+    if (!confirm('确定删除这份本地快照吗？')) return;
+    setLocalBackups(deleteLocalDataBackup(capturedAt));
+  };
+
+  const handleClearLocalBackups = () => {
+    if (!confirm('确定清空全部本地历史快照吗？')) return;
+    setLocalBackups(clearLocalDataBackups());
   };
 
   if (!isOpen) return null;
@@ -297,30 +320,33 @@ const BackupModal: React.FC<BackupModalProps> = ({
             <hr className="border-slate-200 dark:border-slate-700" />
 
             <section className="space-y-4">
-                <h4 className="font-medium text-slate-800 dark:text-slate-200">本地自动快照</h4>
-                <p className="text-xs text-slate-500">每次覆盖本地缓存前会保留最近 8 份快照，适合误删或误导入后快速回退。</p>
+                <div className="flex items-center justify-between gap-3">
+                    <div>
+                        <h4 className="font-medium text-slate-800 dark:text-slate-200">数据版本历史</h4>
+                        <p className="mt-1 text-xs text-slate-500">自动保留最近 8 份本地快照，也可以手动创建当前版本快照。</p>
+                    </div>
+                    <div className="flex gap-2">
+                        <button onClick={handleCreateManualBackup} className="rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/20">创建快照</button>
+                        {localBackups.length > 0 && <button onClick={handleClearLocalBackups} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/20">清空历史</button>}
+                    </div>
+                </div>
                 {localBackups.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-slate-200 dark:border-slate-700 p-4 text-sm text-slate-500">暂无可恢复的本地快照</div>
                 ) : (
                     <div className="space-y-2">
-                        {localBackups.slice(0, 5).map((backup) => (
-                            <button
-                                key={`${backup.capturedAt}-${backup.updatedAt}`}
-                                type="button"
-                                onClick={() => {
-                                    if (confirm('确定恢复这份本地快照吗？当前数据会被覆盖。')) {
-                                        onRestore(backup.links, backup.categories, backup.categoryGroups);
-                                        setLocalBackups(getLocalDataBackups());
-                                    }
-                                }}
-                                className="flex w-full items-center justify-between rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-3 text-left hover:border-blue-400 transition-colors"
-                            >
-                                <span>
-                                    <span className="block text-sm font-medium text-slate-700 dark:text-slate-200">{new Date(backup.capturedAt).toLocaleString()}</span>
-                                    <span className="block text-xs text-slate-500">{backup.links.length} 个链接，{backup.categories.length} 个分类，数据版本 v{backup.version}</span>
-                                </span>
+                        {localBackups.map((backup, index) => (
+                            <div key={`${backup.capturedAt}-${backup.updatedAt}`} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-3">
+                                <button
+                                    type="button"
+                                    onClick={() => handleRestoreLocalBackup(backup)}
+                                    className="min-w-0 flex-1 text-left"
+                                >
+                                    <span className="block text-sm font-medium text-slate-700 dark:text-slate-200">#{index + 1} {backup.note || '自动快照'} · {new Date(backup.capturedAt).toLocaleString()}</span>
+                                    <span className="block text-xs text-slate-500">{backup.links.length} 个链接，{backup.categories.length} 个分类，{backup.categoryGroups?.length || 0} 个分组，数据版本 v{backup.version}</span>
+                                </button>
+                                <button onClick={() => handleDeleteLocalBackup(backup.capturedAt)} className="rounded-lg px-2 py-1 text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">删除</button>
                                 <RefreshCw size={16} className="text-slate-400" />
-                            </button>
+                            </div>
                         ))}
                     </div>
                 )}

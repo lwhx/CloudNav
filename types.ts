@@ -41,6 +41,13 @@ export interface AIOrganizeResult {
   tags?: string[];
 }
 
+export interface AICategorySuggestion {
+  name: string;
+  icon?: string;
+  reason?: string;
+  linkIds: string[];
+}
+
 export const DEFAULT_CATEGORY_GROUP_ID = 'default';
 
 export const DEFAULT_CATEGORY_GROUP: CategoryGroup = {

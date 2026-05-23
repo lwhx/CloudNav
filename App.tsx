@@ -15,7 +15,7 @@ import {
   verticalListSortingStrategy,
   rectSortingStrategy,
 } from '@dnd-kit/sortable';
-import { LinkItem, Category, CategoryGroup, DEFAULT_CATEGORIES, DEFAULT_CATEGORY_GROUP, DEFAULT_CATEGORY_GROUP_ID, INITIAL_LINKS, WebDavConfig, AIConfig, SearchMode, ExternalSearchSource, SearchConfig } from './types';
+import { LinkItem, Category, CategoryGroup, DEFAULT_CATEGORIES, DEFAULT_CATEGORY_GROUP, DEFAULT_CATEGORY_GROUP_ID, INITIAL_LINKS, WebDavConfig, AIConfig, SearchMode, ExternalSearchSource, SearchConfig, AICategorySuggestion } from './types';
 import { parseBookmarks } from './services/bookmarkParser';
 import Icon from './components/Icon';
 import LinkModal from './components/LinkModal';
@@ -574,6 +574,40 @@ function App() {
       handleSaveSearchConfig(restoredSearchConfig.externalSources, restoredSearchConfig.mode);
   };
 
+  const handleApplyCategorySuggestions = (suggestions: AICategorySuggestion[]) => {
+    if (!suggestions.length) return;
+    const now = Date.now();
+    const existingNames = new Set(categories.filter(category => !category.deletedAt).map(category => category.name.trim().toLowerCase()));
+    const nextCategories = [...categories];
+    const linkCategoryMap = new Map<string, string>();
+
+    suggestions.forEach((suggestion, index) => {
+      const name = suggestion.name.trim();
+      if (!name || existingNames.has(name.toLowerCase())) return;
+      const categoryId = `ai-cat-${now}-${index}`;
+      existingNames.add(name.toLowerCase());
+      nextCategories.push({
+        id: categoryId,
+        name,
+        icon: suggestion.icon || 'Folder',
+        groupId: DEFAULT_CATEGORY_GROUP_ID,
+      });
+      suggestion.linkIds.forEach(linkId => linkCategoryMap.set(linkId, categoryId));
+    });
+
+    if (linkCategoryMap.size === 0) {
+      showToast('没有可应用的新分类建议', 'info');
+      return;
+    }
+
+    const nextLinks = links.map(link => {
+      const targetCategoryId = linkCategoryMap.get(link.id);
+      return targetCategoryId ? { ...link, categoryId: targetCategoryId } : link;
+    });
+    updateData(nextLinks, nextCategories, categoryGroups);
+    showToast(`已创建 ${suggestions.length} 个 AI 建议分类并移动匹配链接`, 'success');
+  };
+
   const groupedCategories = useMemo(() => buildGroupedCategories(categoryGroups, categories), [categoryGroups, categories]);
 
   useEffect(() => {
@@ -880,6 +914,7 @@ function App() {
         links={links}
         categories={categories}
         onUpdateLinks={(newLinks) => updateData(newLinks, categories, categoryGroups)}
+        onApplyCategorySuggestions={handleApplyCategorySuggestions}
         authToken={authToken}
         onNotify={showToast}
       />

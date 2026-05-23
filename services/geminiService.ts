@@ -1,5 +1,5 @@
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
-import { AIConfig, AIOrganizeResult } from "../types";
+import { AIConfig, AIOrganizeResult, AICategorySuggestion, LinkItem } from "../types";
 import { normalizeTags } from "./appDataPersistence";
 
 const extractJsonText = (value: string) => {
@@ -22,6 +22,27 @@ const parseOrganizeResult = (value: string): AIOrganizeResult => {
         };
     } catch {
         return {};
+    }
+};
+
+const parseCategorySuggestions = (value: string, validLinkIds: Set<string>): AICategorySuggestion[] => {
+    try {
+        const parsed = JSON.parse(extractJsonText(value));
+        const rawSuggestions = Array.isArray(parsed) ? parsed : parsed.suggestions;
+        if (!Array.isArray(rawSuggestions)) return [];
+        return rawSuggestions
+            .map(item => ({
+                name: typeof item.name === 'string' ? item.name.trim().slice(0, 20) : '',
+                icon: typeof item.icon === 'string' ? item.icon.trim() : 'Folder',
+                reason: typeof item.reason === 'string' ? item.reason.trim().slice(0, 80) : undefined,
+                linkIds: Array.isArray(item.linkIds)
+                    ? Array.from(new Set(item.linkIds.filter((id: unknown) => typeof id === 'string' && validLinkIds.has(id))))
+                    : [],
+            }))
+            .filter(item => item.name && item.linkIds.length > 0)
+            .slice(0, 8);
+    } catch {
+        return [];
     }
 };
 
@@ -181,5 +202,71 @@ ${categoryList}
     } catch (error) {
         console.error('AI organize error:', error);
         return {};
+    }
+};
+
+export const suggestCategoryStructure = async (
+    links: LinkItem[],
+    categories: { id: string; name: string }[],
+    config: AIConfig,
+): Promise<AICategorySuggestion[]> => {
+    if (!config.apiKey) return [];
+
+    const activeLinks = links.filter(link => !link.deletedAt).slice(0, 200);
+    const validLinkIds = new Set(activeLinks.map(link => link.id));
+    const categoryList = categories.map(category => `${category.id}: ${category.name}`).join('\n') || '暂无';
+    const linkList = activeLinks.map(link => {
+        const tags = normalizeTags(link.tags).join('、') || '无';
+        return `- id: ${link.id}\n  title: ${link.title}\n  url: ${link.url}\n  description: ${link.description || '无'}\n  tags: ${tags}`;
+    }).join('\n');
+
+    const prompt = `
+请分析这些书签，给出“建议新增分类”，只返回 JSON，不要返回 markdown。
+
+现有分类：
+${categoryList}
+
+书签列表：
+${linkList}
+
+返回格式：
+{
+  "suggestions": [
+    {
+      "name": "分类名称，最多 10 个中文字符",
+      "icon": "Lucide 图标名，例如 Code、Bot、BookOpen、Palette、Globe、Folder",
+      "reason": "为什么建议这个分类，最多 30 字",
+      "linkIds": ["要移动到这个新分类的链接 id"]
+    }
+  ]
+}
+
+规则：
+- 最多返回 6 个建议分类。
+- 不要返回现有分类同名分类。
+- 每个建议至少包含 2 个链接。
+- linkIds 必须来自书签列表。
+- 只做建议，不要要求删除或合并数据。
+`;
+
+    try {
+        let raw = '';
+        if (config.provider === 'gemini') {
+            const ai = new GoogleGenAI({ apiKey: config.apiKey });
+            const modelName = config.model || 'gemini-2.5-flash';
+            const response: GenerateContentResponse = await ai.models.generateContent({
+                model: modelName,
+                contents: prompt,
+            });
+            raw = response.text || '';
+        } else {
+            raw = await callOpenAICompatible(config, 'You are a bookmark taxonomy assistant. You only return valid JSON.', prompt);
+        }
+
+        const existingNames = new Set(categories.map(category => category.name.trim().toLowerCase()));
+        return parseCategorySuggestions(raw, validLinkIds).filter(suggestion => !existingNames.has(suggestion.name.toLowerCase()));
+    } catch (error) {
+        console.error('AI category suggestion error:', error);
+        return [];
     }
 };

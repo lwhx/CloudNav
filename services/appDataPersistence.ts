@@ -21,6 +21,7 @@ const MAX_TAG_LENGTH = 20;
 
 export interface LocalBackupEntry extends AppDataEnvelope {
   capturedAt: number;
+  note?: string;
 }
 
 export const normalizeTags = (tags?: unknown): string[] => {
@@ -183,3 +184,31 @@ export const saveLocalAppData = (links: LinkItem[], categories: Category[], cate
 };
 
 export const getLocalDataBackups = () => loadLocalBackups();
+
+export const deleteLocalDataBackup = (capturedAt: number) => {
+  const backups = loadLocalBackups().filter(backup => backup.capturedAt !== capturedAt);
+  localStorage.setItem(LOCAL_BACKUPS_KEY, JSON.stringify(backups));
+  return backups;
+};
+
+export const clearLocalDataBackups = () => {
+  localStorage.removeItem(LOCAL_BACKUPS_KEY);
+  return [] as LocalBackupEntry[];
+};
+
+export const createManualLocalBackup = (
+  links: LinkItem[],
+  categories: Category[],
+  categoryGroups?: CategoryGroup[],
+  note = '手动快照',
+) => {
+  const envelope = createAppDataEnvelope(links, categories, categoryGroups);
+  const backup: LocalBackupEntry = {
+    ...envelope,
+    capturedAt: Date.now(),
+    note,
+  };
+  const backups = [backup, ...loadLocalBackups()].slice(0, MAX_LOCAL_BACKUPS);
+  localStorage.setItem(LOCAL_BACKUPS_KEY, JSON.stringify(backups));
+  return backups;
+};
