@@ -2,7 +2,6 @@ import { useCallback, useState } from 'react';
 import { Category, LinkItem } from '../types';
 
 interface UseCategoryAccessOptions {
-  authToken: string;
   categories: Category[];
   links: LinkItem[];
   updateData: (links: LinkItem[], categories: Category[]) => void;
@@ -11,11 +10,9 @@ interface UseCategoryAccessOptions {
   buildAuthHeaders: (token?: string | null, extraHeaders?: Record<string, string>) => Record<string, string>;
   setSelectedCategory: (categoryId: string) => void;
   setSidebarOpen: (open: boolean) => void;
-  setIsAuthOpen: (open: boolean) => void;
 }
 
 export const useCategoryAccess = ({
-  authToken,
   categories,
   links,
   updateData,
@@ -24,11 +21,9 @@ export const useCategoryAccess = ({
   buildAuthHeaders,
   setSelectedCategory,
   setSidebarOpen,
-  setIsAuthOpen,
 }: UseCategoryAccessOptions) => {
   const [unlockedCategoryIds, setUnlockedCategoryIds] = useState<Set<string>>(new Set());
   const [catAuthModalData, setCatAuthModalData] = useState<Category | null>(null);
-  const [pendingProtectedCategoryId, setPendingProtectedCategoryId] = useState<string | null>(null);
   const [categoryActionAuth, setCategoryActionAuth] = useState<{
     isOpen: boolean;
     action: 'edit' | 'delete';
@@ -42,13 +37,6 @@ export const useCategoryAccess = ({
   });
 
   const handleCategoryClick = useCallback((cat: Category) => {
-    if (cat.requireAuth && !authToken) {
-      setPendingProtectedCategoryId(cat.id);
-      setIsAuthOpen(true);
-      setSidebarOpen(false);
-      return;
-    }
-
     if (cat.password && !unlockedCategoryIds.has(cat.id)) {
       setCatAuthModalData(cat);
       setSidebarOpen(false);
@@ -56,7 +44,7 @@ export const useCategoryAccess = ({
     }
     setSelectedCategory(cat.id);
     setSidebarOpen(false);
-  }, [authToken, setIsAuthOpen, setSelectedCategory, setSidebarOpen, unlockedCategoryIds]);
+  }, [setSelectedCategory, setSidebarOpen, unlockedCategoryIds]);
 
   const handleUnlockCategory = useCallback((catId: string) => {
     setUnlockedCategoryIds(prev => new Set(prev).add(catId));
@@ -125,25 +113,17 @@ export const useCategoryAccess = ({
     });
   }, []);
 
-  const requiresGlobalCategoryAuth = useCallback((catId: string) => {
-    const cat = categories.find(c => c.id === catId);
-    return !!cat?.requireAuth && !authToken;
-  }, [authToken, categories]);
-
   const isCategoryLocked = useCallback((catId: string) => {
     const cat = categories.find(c => c.id === catId);
     if (!cat) return false;
-    if (cat.requireAuth && !authToken) return true;
     if (!cat.password) return false;
     return !unlockedCategoryIds.has(catId);
-  }, [authToken, categories, unlockedCategoryIds]);
+  }, [categories, unlockedCategoryIds]);
 
   return {
     unlockedCategoryIds,
     catAuthModalData,
     setCatAuthModalData,
-    pendingProtectedCategoryId,
-    setPendingProtectedCategoryId,
     categoryActionAuth,
     handleCategoryClick,
     handleUnlockCategory,
@@ -152,7 +132,6 @@ export const useCategoryAccess = ({
     handleCategoryActionAuth,
     openCategoryActionAuth,
     closeCategoryActionAuth,
-    requiresGlobalCategoryAuth,
     isCategoryLocked,
   };
 };

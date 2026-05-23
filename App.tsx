@@ -243,8 +243,6 @@ function App() {
     unlockedCategoryIds,
     catAuthModalData,
     setCatAuthModalData,
-    pendingProtectedCategoryId,
-    setPendingProtectedCategoryId,
     categoryActionAuth,
     handleCategoryClick,
     handleUnlockCategory,
@@ -253,10 +251,8 @@ function App() {
     handleCategoryActionAuth,
     openCategoryActionAuth,
     closeCategoryActionAuth,
-    requiresGlobalCategoryAuth,
     isCategoryLocked,
   } = useCategoryAccess({
-    authToken,
     categories,
     links,
     updateData,
@@ -265,7 +261,6 @@ function App() {
     buildAuthHeaders,
     setSelectedCategory,
     setSidebarOpen,
-    setIsAuthOpen,
   });
 
   // --- Effects ---
@@ -416,12 +411,7 @@ function App() {
                 }
             } catch (e) {
                 console.warn("Failed to fetch WebDAV config after login.", e);
-            }
-
-            if (pendingProtectedCategoryId) {
-                setSelectedCategory(pendingProtectedCategoryId);
-                setPendingProtectedCategoryId(null);
-            }
+            }
             
             return true;
         }
@@ -432,8 +422,7 @@ function App() {
   };
 
   const handleLogout = () => {
-      clearAuthSession();
-      setPendingProtectedCategoryId(null);
+      clearAuthSession();
       setSyncStatus('offline');
       // 退出后重新加载本地数据
       loadFromLocal();
@@ -1012,11 +1001,6 @@ function App() {
                           {isLocked ? <Lock size={16} className="text-amber-500" /> : <Icon name={cat.icon} size={16} />}
                         </div>
                         <span className="truncate flex-1 text-left">{cat.name}</span>
-                        {requiresGlobalCategoryAuth(cat.id) && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
-                            需登录
-                          </span>
-                        )}
                         {selectedCategory === cat.id && <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>}
                       </button>
                     );
@@ -1320,7 +1304,7 @@ function App() {
             {/* 添加按钮 - 移动端：搜索框展开时隐藏，桌面端始终显示 */}
             <div className={`${isMobileSearchOpen ? 'hidden' : 'flex'}`}>
               <button
-                onClick={() => { if(!authToken) setIsAuthOpen(true); else { setEditingLink(undefined); setIsModalOpen(true); }}}
+                onClick={() => { setEditingLink(undefined); setIsModalOpen(true); }}
                 className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-full text-sm font-medium shadow-lg shadow-blue-500/30"
               >
                 <Plus size={16} /> <span className="hidden sm:inline">添加</span>

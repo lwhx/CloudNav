@@ -105,11 +105,6 @@ export const useLinkOrganizer = ({
   }, [displayedLinks, selectedLinks]);
 
   const handleAddLink = useCallback((data: Omit<LinkItem, 'id' | 'createdAt'>) => {
-    if (!authToken) {
-      setIsAuthOpen(true);
-      return;
-    }
-
     let processedUrl = data.url;
     if (processedUrl && !processedUrl.startsWith('http://') && !processedUrl.startsWith('https://')) {
       processedUrl = 'https://' + processedUrl;
@@ -153,7 +148,7 @@ export const useLinkOrganizer = ({
     }
 
     setPrefillLink(undefined);
-  }, [authToken, categories, links, setIsAuthOpen, setPrefillLink, updateData]);
+  }, [categories, links, setPrefillLink, updateData]);
 
   const handleEditLink = useCallback((data: Omit<LinkItem, 'id' | 'createdAt'>) => {
     if (!authToken) {

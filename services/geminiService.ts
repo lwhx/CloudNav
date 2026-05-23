@@ -36,7 +36,10 @@ const parseCategorySuggestions = (value: string, validLinkIds: Set<string>): AIC
                 icon: typeof item.icon === 'string' ? item.icon.trim() : 'Folder',
                 reason: typeof item.reason === 'string' ? item.reason.trim().slice(0, 80) : undefined,
                 linkIds: Array.isArray(item.linkIds)
-                    ? Array.from(new Set(item.linkIds.filter((id: unknown) => typeof id === 'string' && validLinkIds.has(id))))
+                    ? (() => {
+                        const linkIds = (item.linkIds as unknown[]).filter((id): id is string => typeof id === 'string' && validLinkIds.has(id));
+                        return Array.from(new Set(linkIds));
+                      })()
                     : [],
             }))
             .filter(item => item.name && item.linkIds.length > 0)
