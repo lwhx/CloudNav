@@ -32,7 +32,6 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   const [editIcon, setEditIcon] = useState('');
   const [editGroupId, setEditGroupId] = useState(DEFAULT_CATEGORY_GROUP_ID);
   const [newCatName, setNewCatName] = useState('');
-  const [newCatPassword, setNewCatPassword] = useState('');
   const [newCatIcon, setNewCatIcon] = useState('Folder');
   const [newCatGroupId, setNewCatGroupId] = useState(DEFAULT_CATEGORY_GROUP_ID);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
@@ -135,11 +134,9 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
       name: newCatName.trim(),
       icon: newCatIcon,
       groupId: newCatGroupId,
-      password: newCatPassword.trim() || undefined,
     };
     onUpdateCategories([...categories, newCat], categoryGroups);
     setNewCatName('');
-    setNewCatPassword('');
     setNewCatIcon('Folder');
     setNewCatGroupId(DEFAULT_CATEGORY_GROUP_ID);
   };
@@ -283,17 +280,20 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2">
               <Icon name={newCatIcon} size={16} />
-              <input type="text" value={newCatName} onChange={(e) => setNewCatName(e.target.value)} placeholder="分类名称" className="flex-1 p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+              <input
+                type="text"
+                value={newCatName}
+                onChange={(e) => setNewCatName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+                placeholder="分类名称"
+                className="flex-1 p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+              />
               <button type="button" className="p-1 text-gray-500 hover:text-blue-600 transition-colors" onClick={() => openIconSelector('new')} title="选择图标"><Palette size={16} /></button>
             </div>
             <select value={newCatGroupId} onChange={(event) => setNewCatGroupId(event.target.value)} className="rounded-lg border border-slate-300 p-2 text-sm dark:border-slate-600 dark:bg-slate-700 dark:text-white">
               {activeGroups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
             </select>
-            <div className="flex gap-2">
-              <div className="flex-1 relative">
-                <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input type="text" value={newCatPassword} onChange={(e) => setNewCatPassword(e.target.value)} placeholder="密码 (可选)" className="w-full pl-8 p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none" onKeyDown={(e) => e.key === 'Enter' && handleAdd()} />
-              </div>
+            <div className="flex justify-end">
               <button onClick={handleAdd} disabled={!newCatName.trim()} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg transition-colors flex items-center"><Plus size={18} /></button>
             </div>
           </div>

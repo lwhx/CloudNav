@@ -1,6 +1,7 @@
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
-import { AIConfig, AIOrganizeResult, AICategorySuggestion, LinkItem } from "../types";
+import { AIConfig, AIOrganizeResult, AICategorySuggestion, AIProviderConfig, LinkItem } from "../types";
 import { normalizeTags } from "./appDataPersistence";
+import { getActiveAIProvider } from "./aiConfigService";
 
 const extractJsonText = (value: string) => {
     const trimmed = value.trim();
@@ -49,9 +50,9 @@ const parseCategorySuggestions = (value: string, validLinkIds: Set<string>): AIC
     }
 };
 
-const callOpenAICompatible = async (config: AIConfig, systemPrompt: string, userPrompt: string): Promise<string> => {
+const callOpenAICompatible = async (provider: AIProviderConfig, systemPrompt: string, userPrompt: string): Promise<string> => {
     try {
-        let baseUrl = config.baseUrl.replace(/\/$/, '');
+        let baseUrl = (provider.baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
         if (!baseUrl.includes('/chat/completions')) {
             if (baseUrl.endsWith('/v1')) baseUrl += '/chat/completions';
             else baseUrl += '/chat/completions';
@@ -61,10 +62,10 @@ const callOpenAICompatible = async (config: AIConfig, systemPrompt: string, user
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${config.apiKey}`
+                'Authorization': `Bearer ${provider.apiKey}`
             },
             body: JSON.stringify({
-                model: config.model,
+                model: provider.model,
                 messages: [
                     { role: "system", content: systemPrompt },
                     { role: "user", content: userPrompt }
@@ -88,7 +89,8 @@ const callOpenAICompatible = async (config: AIConfig, systemPrompt: string, user
 };
 
 export const generateLinkDescription = async (title: string, url: string, config: AIConfig): Promise<string> => {
-  if (!config.apiKey) return "请在设置中配置 API Key";
+  const provider = getActiveAIProvider(config);
+  if (!provider.apiKey) return "请在设置中配置 API Key";
 
   const prompt = `
       Title: ${title}
@@ -97,9 +99,9 @@ export const generateLinkDescription = async (title: string, url: string, config
   `;
 
   try {
-    if (config.provider === 'gemini') {
-        const ai = new GoogleGenAI({ apiKey: config.apiKey });
-        const modelName = config.model || 'gemini-2.5-flash';
+    if (provider.provider === 'gemini') {
+        const ai = new GoogleGenAI({ apiKey: provider.apiKey });
+        const modelName = provider.model || 'gemini-2.5-flash';
         const response: GenerateContentResponse = await ai.models.generateContent({
             model: modelName,
             contents: `I have a website bookmark. ${prompt}`,
@@ -107,7 +109,7 @@ export const generateLinkDescription = async (title: string, url: string, config
         return response.text ? response.text.trim() : "无法生成描述";
     }
 
-    const result = await callOpenAICompatible(config, "You are a helpful assistant that summarizes website bookmarks.", prompt);
+    const result = await callOpenAICompatible(provider, "You are a helpful assistant that summarizes website bookmarks.", prompt);
     return result || "生成描述失败";
   } catch (error) {
     console.error("AI generation error:", error);
@@ -116,7 +118,8 @@ export const generateLinkDescription = async (title: string, url: string, config
 };
 
 export const suggestCategory = async (title: string, url: string, categories: {id: string, name: string}[], config: AIConfig): Promise<string | null> => {
-    if (!config.apiKey) return null;
+    const provider = getActiveAIProvider(config);
+    if (!provider.apiKey) return null;
 
     const catList = categories.map(c => `${c.id}: ${c.name}`).join('\n');
     const prompt = `
@@ -129,9 +132,9 @@ export const suggestCategory = async (title: string, url: string, categories: {i
     `;
 
     try {
-        if (config.provider === 'gemini') {
-            const ai = new GoogleGenAI({ apiKey: config.apiKey });
-            const modelName = config.model || 'gemini-2.5-flash';
+        if (provider.provider === 'gemini') {
+            const ai = new GoogleGenAI({ apiKey: provider.apiKey });
+            const modelName = provider.model || 'gemini-2.5-flash';
             const response: GenerateContentResponse = await ai.models.generateContent({
                 model: modelName,
                 contents: `Task: Categorize this website.\n${prompt}`,
@@ -139,7 +142,7 @@ export const suggestCategory = async (title: string, url: string, categories: {i
             return response.text ? response.text.trim() : null;
         }
 
-        const result = await callOpenAICompatible(config, "You are an intelligent classification assistant. You only output the category ID.", prompt);
+        const result = await callOpenAICompatible(provider, "You are an intelligent classification assistant. You only output the category ID.", prompt);
         return result || null;
     } catch (e) {
         console.error(e);
@@ -155,7 +158,8 @@ export const organizeLink = async (
     existingTags: string[],
     config: AIConfig,
 ): Promise<AIOrganizeResult> => {
-    if (!config.apiKey) return {};
+    const provider = getActiveAIProvider(config);
+    if (!provider.apiKey) return {};
 
     const categoryList = categories.map(category => `${category.id}: ${category.name}`).join('\n');
     const tagPool = normalizeTags(existingTags).join('、') || '暂无';
@@ -184,16 +188,16 @@ ${categoryList}
 
     try {
         let raw = '';
-        if (config.provider === 'gemini') {
-            const ai = new GoogleGenAI({ apiKey: config.apiKey });
-            const modelName = config.model || 'gemini-2.5-flash';
+        if (provider.provider === 'gemini') {
+            const ai = new GoogleGenAI({ apiKey: provider.apiKey });
+            const modelName = provider.model || 'gemini-2.5-flash';
             const response: GenerateContentResponse = await ai.models.generateContent({
                 model: modelName,
                 contents: prompt,
             });
             raw = response.text || '';
         } else {
-            raw = await callOpenAICompatible(config, 'You are a bookmark organization assistant. You only return valid JSON.', prompt);
+            raw = await callOpenAICompatible(provider, 'You are a bookmark organization assistant. You only return valid JSON.', prompt);
         }
 
         const result = parseOrganizeResult(raw);
@@ -213,7 +217,8 @@ export const suggestCategoryStructure = async (
     categories: { id: string; name: string }[],
     config: AIConfig,
 ): Promise<AICategorySuggestion[]> => {
-    if (!config.apiKey) return [];
+    const provider = getActiveAIProvider(config);
+    if (!provider.apiKey) return [];
 
     const activeLinks = links.filter(link => !link.deletedAt).slice(0, 200);
     const validLinkIds = new Set(activeLinks.map(link => link.id));
@@ -254,16 +259,16 @@ ${linkList}
 
     try {
         let raw = '';
-        if (config.provider === 'gemini') {
-            const ai = new GoogleGenAI({ apiKey: config.apiKey });
-            const modelName = config.model || 'gemini-2.5-flash';
+        if (provider.provider === 'gemini') {
+            const ai = new GoogleGenAI({ apiKey: provider.apiKey });
+            const modelName = provider.model || 'gemini-2.5-flash';
             const response: GenerateContentResponse = await ai.models.generateContent({
                 model: modelName,
                 contents: prompt,
             });
             raw = response.text || '';
         } else {
-            raw = await callOpenAICompatible(config, 'You are a bookmark taxonomy assistant. You only return valid JSON.', prompt);
+            raw = await callOpenAICompatible(provider, 'You are a bookmark taxonomy assistant. You only return valid JSON.', prompt);
         }
 
         const existingNames = new Set(categories.map(category => category.name.trim().toLowerCase()));

@@ -97,14 +97,19 @@ export interface WebDavConfig {
 
 export type AIProvider = 'gemini' | 'openai';
 
-export interface AIConfig {
+export interface AIProviderConfig {
+  id: string;
+  name: string;
   provider: AIProvider;
   apiKey: string;
   baseUrl: string;
   model: string;
-  websiteTitle?: string; // 网站标题 (浏览器标签)
-  faviconUrl?: string; // 网站图标URL
-  navigationName?: string;
+  description?: string;
+}
+
+export interface AIConfig {
+  providers: AIProviderConfig[];
+  activeProviderId: string;
 }
 
 

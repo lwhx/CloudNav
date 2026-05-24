@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Sparkles, Loader2, Pin, Wand2, Trash2 } from 'lucide-react';
 import { LinkItem, Category, AIConfig } from '../types';
 import { normalizeTags } from '../services/appDataPersistence';
+import { getActiveAIProvider } from '../services/aiConfigService';
 import { NotifyHandler } from '../hooks/useToast';
 
 interface LinkModalProps {
@@ -224,8 +225,9 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
 
   const handleAIAssist = async () => {
     if (!url || !title) return;
-    if (!aiConfig.apiKey) {
-        onNotify?.("请先点击侧边栏左下角设置图标配置 AI API Key", 'warning');
+    const activeAIProvider = getActiveAIProvider(aiConfig);
+    if (!activeAIProvider.apiKey) {
+        onNotify?.(`请先在 AI 设置里为 ${activeAIProvider.name} 配置 API Key`, 'warning');
         return;
     }
 

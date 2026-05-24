@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Save, Bot, Key, Globe, Sparkles, PauseCircle, Wrench, Box, Copy, Check, LayoutTemplate, Info, Download, Sidebar, Keyboard, MousePointerClick, AlertTriangle, Package, Zap, Menu, Upload } from 'lucide-react';
-import { AIConfig, LinkItem, Category, SiteSettings, AICategorySuggestion } from '../types';
+import { X, Save, Bot, Key, Globe, Sparkles, PauseCircle, Wrench, Box, Copy, Check, LayoutTemplate, Info, Download, Sidebar, Keyboard, MousePointerClick, AlertTriangle, Package, Zap, Menu, Upload, Plus, Trash2 } from 'lucide-react';
+import { AIConfig, AIProvider, AIProviderConfig, LinkItem, Category, SiteSettings, AICategorySuggestion } from '../types';
 import { normalizeTags } from '../services/appDataPersistence';
+import { createBlankAIProvider, getActiveAIProvider, normalizeAIConfig } from '../services/aiConfigService';
 import JSZip from 'jszip';
 import { NotifyHandler } from '../hooks/useToast';
 
@@ -24,7 +25,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     isOpen, onClose, config, siteSettings, onSave, links, categories, onUpdateLinks, onApplyCategorySuggestions, authToken, onNotify 
 }) => {
   const [activeTab, setActiveTab] = useState<'site' | 'ai' | 'tools'>('site');
-  const [localConfig, setLocalConfig] = useState<AIConfig>(config);
+  const [localConfig, setLocalConfig] = useState<AIConfig>(() => normalizeAIConfig(config));
+  const [selectedProviderId, setSelectedProviderId] = useState(() => normalizeAIConfig(config).activeProviderId);
   
   const [localSiteSettings, setLocalSiteSettings] = useState<SiteSettings>(() => ({
       title: siteSettings?.title || 'CloudNav - 我的导航',
@@ -50,9 +52,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   
   const [copiedStates, setCopiedStates] = useState<{[key: string]: boolean}>({});
 
+  const normalizedLocalConfig = normalizeAIConfig(localConfig);
+  const activeAIProvider = getActiveAIProvider(normalizedLocalConfig);
+  const selectedAIProvider = normalizedLocalConfig.providers.find(provider => provider.id === selectedProviderId) || activeAIProvider;
+
   useEffect(() => {
     if (isOpen) {
-      setLocalConfig(config);
+      const normalizedConfig = normalizeAIConfig(config);
+      setLocalConfig(normalizedConfig);
+      setSelectedProviderId(normalizedConfig.activeProviderId);
       const safeSettings = {
           title: siteSettings?.title || 'CloudNav - 我的导航',
           navTitle: siteSettings?.navTitle || 'CloudNav',
@@ -75,8 +83,72 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }, [isOpen, config, siteSettings]);
 
-  const handleChange = (key: keyof AIConfig, value: string) => {
-    setLocalConfig(prev => ({ ...prev, [key]: value }));
+  const handleProviderChange = (providerId: string, key: keyof AIProviderConfig, value: string) => {
+    setLocalConfig(prev => {
+        const normalized = normalizeAIConfig(prev);
+        return {
+            ...normalized,
+            providers: normalized.providers.map(provider => {
+                if (provider.id !== providerId) return provider;
+                if (key === 'provider') {
+                    const nextProvider = value as AIProvider;
+                    return {
+                        ...provider,
+                        provider: nextProvider,
+                        baseUrl: nextProvider === 'openai' ? provider.baseUrl || 'https://api.openai.com/v1' : '',
+                        model: provider.model || (nextProvider === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini'),
+                    };
+                }
+                return { ...provider, [key]: value };
+            }),
+        };
+    });
+  };
+
+  const handleAddProvider = () => {
+    const provider = createBlankAIProvider('openai');
+    setLocalConfig(prev => {
+        const normalized = normalizeAIConfig(prev);
+        return {
+            ...normalized,
+            providers: [...normalized.providers, provider],
+        };
+    });
+    setSelectedProviderId(provider.id);
+  };
+
+  const handleActivateProvider = (providerId: string) => {
+    setLocalConfig(prev => {
+        const normalized = normalizeAIConfig(prev);
+        return {
+            ...normalized,
+            activeProviderId: providerId,
+        };
+    });
+    setSelectedProviderId(providerId);
+  };
+
+  const handleDeleteProvider = (providerId: string) => {
+    const normalized = normalizeAIConfig(localConfig);
+    if (normalized.providers.length <= 1) {
+        onNotify?.('至少保留一个 AI 提供商', 'warning');
+        return;
+    }
+    if (!confirm('确定删除这个 AI 提供商吗？')) return;
+
+    setLocalConfig(prev => {
+        const current = normalizeAIConfig(prev);
+        const providers = current.providers.filter(provider => provider.id !== providerId);
+        const activeProviderId = current.activeProviderId === providerId ? providers[0].id : current.activeProviderId;
+        return {
+            providers,
+            activeProviderId,
+        };
+    });
+    if (selectedProviderId === providerId) {
+        const fallbackProvider = normalized.providers.find(provider => provider.id !== providerId);
+        if (fallbackProvider) setSelectedProviderId(fallbackProvider.id);
+    }
   };
 
   const handleSiteChange = async (key: keyof SiteSettings, value: any) => {
@@ -118,13 +190,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleSave = () => {
-    onSave(localConfig, localSiteSettings);
+    onSave(normalizeAIConfig(localConfig), localSiteSettings);
     onClose();
   };
 
   const handleBulkGenerate = async () => {
-    if (!localConfig.apiKey) {
-        onNotify?.("请先配置并保存 API Key", 'warning');
+    if (!activeAIProvider.apiKey) {
+        onNotify?.(`请先为 ${activeAIProvider.name} 配置并保存 API Key`, 'warning');
         return;
     }
 
@@ -201,8 +273,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleSuggestCategories = async () => {
-    if (!localConfig.apiKey) {
-        onNotify?.('请先配置并保存 API Key', 'warning');
+    if (!activeAIProvider.apiKey) {
+        onNotify?.(`请先为 ${activeAIProvider.name} 配置并保存 API Key`, 'warning');
         return;
     }
     const activeLinks = links.filter(link => !link.deletedAt);
@@ -1339,55 +1411,158 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 {activeTab === 'ai' && (
                     <div className="space-y-6 animate-in fade-in duration-300">
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">AI 提供商</label>
-                            <select 
-                                value={localConfig.provider}
-                                onChange={(e) => handleChange('provider', e.target.value)}
-                                className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white outline-none focus:ring-2 focus:ring-blue-500"
-                            >
-                                <option value="gemini">Google Gemini</option>
-                                <option value="openai">OpenAI Compatible (ChatGPT, DeepSeek, Claude...)</option>
-                            </select>
-                        </div>
-                        
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">API Key</label>
-                            <div className="relative">
-                                <Key size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input 
-                                    type="password" 
-                                    value={localConfig.apiKey}
-                                    onChange={(e) => handleChange('apiKey', e.target.value)}
-                                    placeholder="sk-..."
-                                    className="w-full pl-10 p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-                                />
+                        <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
+                            <div className="space-y-3">
+                                <button
+                                    type="button"
+                                    onClick={handleAddProvider}
+                                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:border-blue-500 hover:text-blue-600 dark:border-slate-600 dark:text-slate-200 dark:hover:text-blue-400"
+                                >
+                                    <Plus size={16} />
+                                    添加提供商
+                                </button>
+                                <div className="space-y-2">
+                                    {normalizedLocalConfig.providers.map(provider => {
+                                        const isSelected = provider.id === selectedAIProvider.id;
+                                        const isActive = provider.id === normalizedLocalConfig.activeProviderId;
+                                        return (
+                                            <button
+                                                key={provider.id}
+                                                type="button"
+                                                onClick={() => setSelectedProviderId(provider.id)}
+                                                className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors ${
+                                                    isSelected
+                                                        ? 'border-blue-500 bg-blue-50 text-slate-900 dark:bg-blue-900/20 dark:text-white'
+                                                        : 'border-slate-200 bg-white text-slate-700 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                                                }`}
+                                            >
+                                                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${isActive ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}`}>
+                                                    <Bot size={15} />
+                                                </span>
+                                                <span className="min-w-0 flex-1">
+                                                    <span className="block truncate text-sm font-medium">{provider.name || '未命名提供商'}</span>
+                                                    <span className="block truncate text-xs text-slate-500">{provider.provider === 'gemini' ? 'Gemini' : 'OpenAI Compatible'}</span>
+                                                </span>
+                                                <span
+                                                    role="radio"
+                                                    aria-checked={isActive}
+                                                    onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        handleActivateProvider(provider.id);
+                                                    }}
+                                                    className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors ${
+                                                        isActive
+                                                            ? 'border-blue-600 bg-blue-600'
+                                                            : 'border-slate-300 bg-slate-100 dark:border-slate-600 dark:bg-slate-700'
+                                                    }`}
+                                                    title={isActive ? '当前启用' : '启用这个提供商'}
+                                                >
+                                                    <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${isActive ? 'translate-x-5' : 'translate-x-1'}`} />
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
                             </div>
-                            <p className="text-xs text-slate-500 mt-1">Key 仅存储在本地浏览器缓存中，不会发送到我们的服务器。</p>
-                        </div>
 
-                        {localConfig.provider === 'openai' && (
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Base URL (API 地址)</label>
-                                <input 
-                                    type="text" 
-                                    value={localConfig.baseUrl}
-                                    onChange={(e) => handleChange('baseUrl', e.target.value)}
-                                    placeholder="https://api.openai.com/v1"
-                                    className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white outline-none focus:ring-2 focus:ring-blue-500"
-                                />
+                            <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-700">
+                                <div className="mb-4 flex items-start justify-between gap-3">
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <Bot size={18} className="text-blue-600 dark:text-blue-400" />
+                                            <h4 className="font-semibold text-slate-900 dark:text-white">{selectedAIProvider.name || '未命名提供商'}</h4>
+                                        </div>
+                                        <p className="mt-1 text-xs text-slate-500">当前启用：{activeAIProvider.name || '未命名提供商'}</p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleActivateProvider(selectedAIProvider.id)}
+                                            disabled={selectedAIProvider.id === normalizedLocalConfig.activeProviderId}
+                                            className="rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:border-slate-200 disabled:text-slate-400 disabled:hover:bg-transparent dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-900/20 dark:disabled:border-slate-700 dark:disabled:text-slate-500"
+                                        >
+                                            {selectedAIProvider.id === normalizedLocalConfig.activeProviderId ? '已启用' : '启用'}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDeleteProvider(selectedAIProvider.id)}
+                                            disabled={normalizedLocalConfig.providers.length <= 1}
+                                            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-900/20"
+                                            title="删除提供商"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">名称</label>
+                                        <input
+                                            type="text"
+                                            value={selectedAIProvider.name}
+                                            onChange={(e) => handleProviderChange(selectedAIProvider.id, 'name', e.target.value)}
+                                            className="w-full rounded-lg border border-slate-300 p-2 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">类型</label>
+                                        <select
+                                            value={selectedAIProvider.provider}
+                                            onChange={(e) => handleProviderChange(selectedAIProvider.id, 'provider', e.target.value)}
+                                            className="w-full rounded-lg border border-slate-300 p-2 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                                        >
+                                            <option value="gemini">Google Gemini</option>
+                                            <option value="openai">OpenAI Compatible</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">描述</label>
+                                        <input
+                                            type="text"
+                                            value={selectedAIProvider.description || ''}
+                                            onChange={(e) => handleProviderChange(selectedAIProvider.id, 'description', e.target.value)}
+                                            placeholder="这个提供商的用途或备注"
+                                            className="w-full rounded-lg border border-slate-300 p-2 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">API Key</label>
+                                        <div className="relative">
+                                            <Key size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                            <input
+                                                type="password"
+                                                value={selectedAIProvider.apiKey}
+                                                onChange={(e) => handleProviderChange(selectedAIProvider.id, 'apiKey', e.target.value)}
+                                                placeholder="sk-..."
+                                                className="w-full rounded-lg border border-slate-300 p-2 pl-10 font-mono outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                                            />
+                                        </div>
+                                    </div>
+                                    {selectedAIProvider.provider === 'openai' && (
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Base URL</label>
+                                            <input
+                                                type="text"
+                                                value={selectedAIProvider.baseUrl}
+                                                onChange={(e) => handleProviderChange(selectedAIProvider.id, 'baseUrl', e.target.value)}
+                                                placeholder="https://api.openai.com/v1"
+                                                className="w-full rounded-lg border border-slate-300 p-2 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                                            />
+                                        </div>
+                                    )}
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">模型名称</label>
+                                        <input
+                                            type="text"
+                                            value={selectedAIProvider.model}
+                                            onChange={(e) => handleProviderChange(selectedAIProvider.id, 'model', e.target.value)}
+                                            placeholder={selectedAIProvider.provider === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini'}
+                                            className="w-full rounded-lg border border-slate-300 p-2 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                                        />
+                                    </div>
+                                </div>
                             </div>
-                        )}
-
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">模型名称 (Model Name)</label>
-                            <input 
-                                type="text" 
-                                value={localConfig.model}
-                                onChange={(e) => handleChange('model', e.target.value)}
-                                placeholder={localConfig.provider === 'gemini' ? "gemini-2.5-flash" : "gpt-3.5-turbo"}
-                                className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white outline-none focus:ring-2 focus:ring-blue-500"
-                            />
                         </div>
 
                         <div className="pt-4 border-t border-slate-100 dark:border-slate-700">

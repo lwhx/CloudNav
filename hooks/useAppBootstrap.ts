@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { AIConfig, Category, CategoryGroup, DEFAULT_CATEGORIES, DEFAULT_CATEGORY_GROUP, LinkItem, SearchConfig, SiteSettings, WebDavConfig } from '../types';
 import { createDefaultSearchSources } from './useSearchConfig';
 import { saveLocalAppData } from '../services/appDataPersistence';
+import { normalizeAIConfig } from '../services/aiConfigService';
 
 const AUTH_KEY = 'cloudnav_auth_token';
 const AUTH_TIME_KEY = 'lastLoginTime';
@@ -240,8 +241,9 @@ export const fetchProtectedConfigsAfterLogin = async ({
     if (aiConfigRes.ok) {
       const aiConfigData = await aiConfigRes.json();
       if (aiConfigData && Object.keys(aiConfigData).length > 0) {
-        setAiConfig(aiConfigData);
-        localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(aiConfigData));
+        const normalizedAIConfig = normalizeAIConfig(aiConfigData);
+        setAiConfig(normalizedAIConfig);
+        localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(normalizedAIConfig));
       }
     }
   } catch (e) {

@@ -41,6 +41,7 @@ import { useCategoryAccess } from './hooks/useCategoryAccess';
 import { useLinkOrganizer } from './hooks/useLinkOrganizer';
 import { fetchProtectedConfigsAfterLogin, useAppBootstrap } from './hooks/useAppBootstrap';
 import { saveLocalAppData, normalizeTags } from './services/appDataPersistence';
+import { getDefaultAIConfig, normalizeAIConfig } from './services/aiConfigService';
 import LinkCard from './components/links/LinkCard';
 import SortableLinkCard from './components/links/SortableLinkCard';
 
@@ -128,15 +129,10 @@ function App() {
       const saved = localStorage.getItem(AI_CONFIG_KEY);
       if (saved) {
           try {
-              return JSON.parse(saved);
+              return normalizeAIConfig(JSON.parse(saved), process.env.API_KEY || '');
           } catch (e) {}
       }
-      return {
-          provider: 'gemini',
-          apiKey: process.env.API_KEY || '', 
-          baseUrl: '',
-          model: 'gemini-2.5-flash'
-      };
+      return getDefaultAIConfig(process.env.API_KEY || '');
   });
 
   // Modals
@@ -390,8 +386,9 @@ function App() {
                 if (aiConfigRes.ok) {
                     const aiConfigData = await aiConfigRes.json();
                     if (aiConfigData && Object.keys(aiConfigData).length > 0) {
-                        setAiConfig(aiConfigData);
-                        localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(aiConfigData));
+                        const normalizedAIConfig = normalizeAIConfig(aiConfigData, process.env.API_KEY || '');
+                        setAiConfig(normalizedAIConfig);
+                        localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(normalizedAIConfig));
                     }
                 }
             } catch (e) {
@@ -451,8 +448,9 @@ function App() {
   };
 
   const handleSaveAIConfig = async (config: AIConfig, newSiteSettings?: any) => {
-      setAiConfig(config);
-      localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(config));
+      const normalizedConfig = normalizeAIConfig(config, process.env.API_KEY || '');
+      setAiConfig(normalizedConfig);
+      localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(normalizedConfig));
       
       if (newSiteSettings) {
           setSiteSettings(newSiteSettings);
@@ -468,7 +466,7 @@ function App() {
                   }),
                   body: JSON.stringify({
                       saveConfig: 'ai',
-                      config: config
+                      config: normalizedConfig
                   })
               });
               
@@ -503,8 +501,9 @@ function App() {
   };
 
   const handleRestoreAIConfig = async (config: AIConfig) => {
-      setAiConfig(config);
-      localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(config));
+      const normalizedConfig = normalizeAIConfig(config, process.env.API_KEY || '');
+      setAiConfig(normalizedConfig);
+      localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(normalizedConfig));
       
       // 同时保存到KV空间
       if (authToken) {
@@ -516,7 +515,7 @@ function App() {
                   }),
                   body: JSON.stringify({
                       saveConfig: 'ai',
-                      config: config
+                      config: normalizedConfig
                   })
               });
               
