@@ -8,6 +8,7 @@ interface UseLinkOrganizerOptions {
   links: LinkItem[];
   categories: Category[];
   selectedCategory: string;
+  setSelectedCategory: (categoryId: string) => void;
   displayedLinks: LinkItem[];
   authToken: string;
   requireAuth: () => boolean;
@@ -23,6 +24,7 @@ export const useLinkOrganizer = ({
   links,
   categories,
   selectedCategory,
+  setSelectedCategory,
   displayedLinks,
   authToken,
   requireAuth,
@@ -149,8 +151,11 @@ export const useLinkOrganizer = ({
       updateData(updatedLinks, categories);
     }
 
+    if (selectedCategory !== 'all' && selectedCategory !== newLink.categoryId) {
+      setSelectedCategory(newLink.categoryId);
+    }
     setPrefillLink(undefined);
-  }, [categories, links, setPrefillLink, updateData]);
+  }, [categories, links, selectedCategory, setPrefillLink, setSelectedCategory, updateData]);
 
   const handleEditLink = useCallback((data: Omit<LinkItem, 'id' | 'createdAt'>) => {
     if (!authToken) {
@@ -166,8 +171,11 @@ export const useLinkOrganizer = ({
 
     const updated = links.map(l => l.id === editingLink.id ? { ...l, ...data, url: processedUrl, tags: normalizeTags(data.tags) } : l);
     updateData(updated, categories);
+    if (selectedCategory !== 'all' && selectedCategory !== data.categoryId) {
+      setSelectedCategory(data.categoryId);
+    }
     setEditingLink(undefined);
-  }, [authToken, categories, editingLink, links, setEditingLink, setIsAuthOpen, updateData]);
+  }, [authToken, categories, editingLink, links, selectedCategory, setEditingLink, setIsAuthOpen, setSelectedCategory, updateData]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;

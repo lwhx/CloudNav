@@ -11,7 +11,8 @@ interface LinkModalProps {
   onSave: (link: Omit<LinkItem, 'id' | 'createdAt'>) => void;
   onDelete?: (id: string) => void;
   categories: Category[];
-  initialData?: LinkItem;
+  initialData?: Partial<LinkItem>;
+  isEditing?: boolean;
   aiConfig: AIConfig;
   defaultCategoryId?: string;
   onNotify?: NotifyHandler;
@@ -19,7 +20,7 @@ interface LinkModalProps {
 
 const parseTagInput = (value: string) => normalizeTags(value.split(/[，,\n]/));
 
-const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete, categories, initialData, aiConfig, defaultCategoryId, onNotify }) => {
+const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete, categories, initialData, isEditing = false, aiConfig, defaultCategoryId, onNotify }) => {
   const [title, setTitle] = useState('');
   const [url, setUrl] = useState('');
   const [description, setDescription] = useState('');
@@ -62,10 +63,10 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
   useEffect(() => {
     if (isOpen) {
       if (initialData) {
-        setTitle(initialData.title);
-        setUrl(initialData.url);
+        setTitle(initialData.title || '');
+        setUrl(initialData.url || '');
         setDescription(initialData.description || '');
-        setCategoryId(initialData.categoryId);
+        setCategoryId(initialData.categoryId || defaultCategoryId || categories[0]?.id || 'common');
         setPinned(initialData.pinned || false);
         setTags(normalizeTags(initialData.tags));
         setTagInput('');
@@ -87,17 +88,17 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
 
   // 当URL变化且启用自动获取图标时，自动获取图标
   useEffect(() => {
-    if (url && autoFetchIcon && !initialData) {
+    if (url && autoFetchIcon && !isEditing) {
       const timer = setTimeout(() => {
         handleFetchIcon();
       }, 500); // 延迟500ms执行，避免频繁请求
       
       return () => clearTimeout(timer);
     }
-  }, [url, autoFetchIcon, initialData]);
+  }, [url, autoFetchIcon, isEditing]);
 
   useEffect(() => {
-    if (url && !title.trim() && !initialData) {
+    if (url && !title.trim() && !isEditing) {
       const timer = setTimeout(() => {
         handleFetchTitle(url);
       }, 500);
@@ -109,10 +110,10 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     titleFetchControllerRef.current = null;
     titleFetchUrlRef.current = '';
     setIsFetchingTitle(false);
-  }, [url, title, initialData]);
+  }, [url, title, isEditing]);
 
   const handleDelete = () => {
-    if (!initialData) return;
+    if (!initialData?.id) return;
     onDelete && onDelete(initialData.id);
     onClose();
   };
@@ -193,7 +194,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     
     // 保存链接数据
     onSave({
-      id: initialData?.id || '',
+      id: isEditing ? initialData?.id || '' : '',
       title,
       url: finalUrl,
       icon: finalIcon,
@@ -357,7 +358,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
         <div className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-slate-700">
           <div className="flex items-center gap-2">
             <h3 className="text-lg font-semibold dark:text-white">
-              {initialData ? '编辑链接' : '添加新链接'}
+              {isEditing ? '编辑链接' : '添加新链接'}
             </h3>
             <button
               type="button"
@@ -372,7 +373,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
               <Pin size={14} className={pinned ? "fill-current" : ""} />
               <span className="text-xs font-medium">置顶</span>
             </button>
-            {!initialData && (
+            {!isEditing && (
               <div className="flex items-center gap-1 px-2 py-1 rounded-md border bg-slate-50 border-slate-200 dark:bg-slate-700 dark:border-slate-600">
                 <input
                   type="checkbox"
@@ -386,7 +387,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
                 </label>
               </div>
             )}
-            {initialData && onDelete && (
+            {isEditing && onDelete && (
               <button
                 type="button"
                 onClick={handleDelete}

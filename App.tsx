@@ -742,6 +742,7 @@ function App() {
     links,
     categories,
     selectedCategory,
+    setSelectedCategory,
     displayedLinks,
     authToken,
     requireAuth,
@@ -1592,7 +1593,8 @@ function App() {
             onSave={editingLink ? handleEditLink : handleAddLink}
             onDelete={editingLink ? handleDeleteLink : undefined}
             categories={categories}
-            initialData={editingLink || (prefillLink as LinkItem)}
+            initialData={editingLink || prefillLink}
+            isEditing={!!editingLink}
             aiConfig={aiConfig}
             defaultCategoryId={selectedCategory !== 'all' ? selectedCategory : undefined}
             onNotify={showToast}
