@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { DragEndEvent, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { Category, LinkItem } from '../types';
+import { normalizeTags } from '../services/appDataPersistence';
 
 interface UseLinkOrganizerOptions {
   links: LinkItem[];
@@ -120,6 +121,7 @@ export const useLinkOrganizer = ({
     const newLink: LinkItem = {
       ...data,
       url: processedUrl,
+      tags: normalizeTags(data.tags),
       id: Date.now().toString(),
       createdAt: Date.now(),
       order: maxOrder + 1,
@@ -162,7 +164,7 @@ export const useLinkOrganizer = ({
       processedUrl = 'https://' + processedUrl;
     }
 
-    const updated = links.map(l => l.id === editingLink.id ? { ...l, ...data, url: processedUrl } : l);
+    const updated = links.map(l => l.id === editingLink.id ? { ...l, ...data, url: processedUrl, tags: normalizeTags(data.tags) } : l);
     updateData(updated, categories);
     setEditingLink(undefined);
   }, [authToken, categories, editingLink, links, setEditingLink, setIsAuthOpen, updateData]);

@@ -25,7 +25,7 @@ const LinkCard = ({
   const hiddenTagCount = Math.max((link.tags || []).length - visibleTags.length, 0);
 
   const tagChips = visibleTags.length > 0 && (
-    <div className={`flex flex-wrap gap-1 ${isDetailedView ? 'mt-2' : 'ml-2 max-w-[45%]'}`}>
+    <div className={`flex flex-wrap gap-1 ${isDetailedView ? 'mt-2' : 'mt-2 w-full'}`}>
       {visibleTags.map(tag => (
         <span key={tag} className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
           #{tag}
@@ -71,13 +71,13 @@ const LinkCard = ({
       } ${isBatchEditMode ? 'cursor-pointer' : ''} ${
         isDetailedView
           ? 'flex flex-col rounded-2xl border shadow-sm p-4 min-h-[100px] hover:border-blue-400 dark:hover:border-blue-500'
-          : 'flex items-center justify-between rounded-xl border shadow-sm p-3 hover:border-blue-300 dark:hover:border-blue-600'
+          : 'flex min-h-[72px] flex-col justify-center rounded-xl border shadow-sm p-3 hover:border-blue-300 dark:hover:border-blue-600'
       }`}
       onClick={() => isBatchEditMode && onToggleSelection(link.id)}
       onContextMenu={(event) => onContextMenu(event, link)}
     >
       {isBatchEditMode ? (
-        <div className={`flex flex-1 min-w-0 overflow-hidden h-full ${isDetailedView ? 'flex-col' : 'items-center'}`}>
+        <div className={`flex flex-1 min-w-0 overflow-hidden h-full flex-col`}>
           {content}
         </div>
       ) : (
@@ -85,7 +85,7 @@ const LinkCard = ({
           href={link.url}
           target="_blank"
           rel="noopener noreferrer"
-          className={`flex flex-1 min-w-0 overflow-hidden h-full ${isDetailedView ? 'flex-col' : 'items-center'}`}
+          className="flex flex-1 min-w-0 overflow-hidden h-full flex-col"
           title={isDetailedView ? link.url : (link.description || link.url)}
         >
           {content}
