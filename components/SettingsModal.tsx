@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Bot, Key, Globe, Sparkles, PauseCircle, Wrench, Box, Copy, Check, LayoutTemplate, Info, Download, Sidebar, Keyboard, MousePointerClick, AlertTriangle, Package, Zap, Menu, Upload, Plus, Trash2 } from 'lucide-react';
 import { AIConfig, AIProvider, AIProviderConfig, LinkItem, Category, SiteSettings, AICategorySuggestion } from '../types';
 import { normalizeTags } from '../services/appDataPersistence';
-import { createBlankAIProvider, getActiveAIProvider, normalizeAIConfig } from '../services/aiConfigService';
+import { createBlankAIProvider, getActiveAIProvider, getDefaultAIModel, normalizeAIConfig } from '../services/aiConfigService';
 import JSZip from 'jszip';
 import { NotifyHandler } from '../hooks/useToast';
 
@@ -96,7 +96,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         ...provider,
                         provider: nextProvider,
                         baseUrl: nextProvider === 'openai' ? provider.baseUrl || 'https://api.openai.com/v1' : '',
-                        model: provider.model || (nextProvider === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini'),
+                        model: getDefaultAIModel(nextProvider),
                     };
                 }
                 return { ...provider, [key]: value };

@@ -29,11 +29,13 @@ interface UseAppBootstrapOptions {
   setSelectedSearchSource: (source: SearchConfig['selectedSource']) => void;
   setIsLoadingSearchConfig: (loading: boolean) => void;
   setSiteSettings: (updater: SiteSettings | ((prev: SiteSettings) => SiteSettings)) => void;
+  setAiConfig: (config: AIConfig) => void;
   setWebDavConfig: (config: WebDavConfig) => void;
   setPrefillLink: (link?: Partial<LinkItem>) => void;
   setEditingLink: (link?: LinkItem) => void;
   setIsModalOpen: (open: boolean) => void;
   setIsAuthOpen: (open: boolean) => void;
+  fallbackApiKey?: string;
 }
 
 export const useAppBootstrap = ({
@@ -54,17 +56,19 @@ export const useAppBootstrap = ({
   setSelectedSearchSource,
   setIsLoadingSearchConfig,
   setSiteSettings,
+  setAiConfig,
   setWebDavConfig,
   setPrefillLink,
   setEditingLink,
   setIsModalOpen,
   setIsAuthOpen,
+  fallbackApiKey = '',
 }: UseAppBootstrapOptions) => {
   useEffect(() => {
-    const savedToken = localStorage.getItem(AUTH_KEY);
+    let effectiveToken = localStorage.getItem(AUTH_KEY);
     const lastLoginTime = localStorage.getItem(AUTH_TIME_KEY);
 
-    if (savedToken) {
+    if (effectiveToken) {
       const currentTime = Date.now();
       const expiryDays = siteSettings.passwordExpiryDays || 7;
       const expiryTimeMs = expiryDays > 0 ? expiryDays * 24 * 60 * 60 * 1000 : 0;
@@ -72,8 +76,9 @@ export const useAppBootstrap = ({
 
       if (expiryTimeMs > 0 && lastLogin > 0 && currentTime - lastLogin > expiryTimeMs) {
         clearAuthSession();
+        effectiveToken = null;
       } else {
-        setAuthToken(savedToken);
+        setAuthToken(effectiveToken);
       }
     }
 
@@ -91,7 +96,7 @@ export const useAppBootstrap = ({
       window.history.replaceState({}, '', window.location.pathname);
       setPrefillLink({ title: addTitle, url: addUrl, categoryId: 'common' });
       setEditingLink(undefined);
-      if (savedToken) {
+      if (effectiveToken) {
         setIsModalOpen(true);
       } else {
         setIsAuthOpen(true);
@@ -117,25 +122,26 @@ export const useAppBootstrap = ({
           const authData = await authRes.json();
           setRequiresAuth(authData.requiresAuth);
 
-          if (authData.hasPassword && savedToken) {
+          if (authData.hasPassword && effectiveToken) {
             const validateRes = await fetch('/api/storage', {
               method: 'POST',
-              headers: buildAuthHeaders(savedToken, { 'Content-Type': 'application/json' }),
+              headers: buildAuthHeaders(effectiveToken, { 'Content-Type': 'application/json' }),
               body: JSON.stringify({ authOnly: true }),
             });
 
             if (!validateRes.ok) {
               clearAuthSession();
+              effectiveToken = null;
             } else {
               const validateData = await validateRes.json();
               if (validateData?.authenticatedAt) {
                 localStorage.setItem(AUTH_TIME_KEY, String(validateData.authenticatedAt));
-                setAuthToken(savedToken);
+                setAuthToken(effectiveToken);
               }
             }
           }
 
-          if (authData.requiresAuth && !savedToken) {
+          if (authData.requiresAuth && !effectiveToken) {
             setIsCheckingAuth(false);
             return;
           }
@@ -145,7 +151,8 @@ export const useAppBootstrap = ({
       }
 
       let hasCloudData = false;
-      const activeToken = savedToken || authToken;
+      let hasSearchConfig = false;
+      const activeToken = effectiveToken || authToken;
       try {
         const res = await fetch('/api/storage', {
           headers: activeToken ? buildAuthHeaders(activeToken) : {},
@@ -177,10 +184,17 @@ export const useAppBootstrap = ({
       }
 
       try {
-        const searchConfigRes = await fetch('/api/storage?getConfig=search');
-        if (searchConfigRes.ok) {
-          const searchConfigData = await searchConfigRes.json();
+        const [searchConfigResult, websiteConfigResult, aiConfigResult, webDavConfigResult] = await Promise.allSettled([
+          fetch('/api/storage?getConfig=search'),
+          fetch('/api/storage?getConfig=website'),
+          activeToken ? fetch('/api/storage?getConfig=ai', { headers: buildAuthHeaders(activeToken) }) : Promise.resolve(null),
+          activeToken ? fetch('/api/storage?getConfig=webdav', { headers: buildAuthHeaders(activeToken) }) : Promise.resolve(null),
+        ]);
+
+        if (searchConfigResult.status === 'fulfilled' && searchConfigResult.value?.ok) {
+          const searchConfigData = await searchConfigResult.value.json();
           if (searchConfigData && (searchConfigData.mode || searchConfigData.externalSources || searchConfigData.selectedSource)) {
+            hasSearchConfig = true;
             setSearchMode(searchConfigData.mode || 'internal');
             setExternalSearchSources(searchConfigData.externalSources || []);
             if (searchConfigData.selectedSource) {
@@ -189,22 +203,25 @@ export const useAppBootstrap = ({
           }
         }
 
-        const websiteConfigRes = await fetch('/api/storage?getConfig=website');
-        if (websiteConfigRes.ok) {
-          const websiteConfigData = await websiteConfigRes.json();
+        if (websiteConfigResult.status === 'fulfilled' && websiteConfigResult.value?.ok) {
+          const websiteConfigData = await websiteConfigResult.value.json();
           if (websiteConfigData) applyWebsiteConfig(websiteConfigData);
         }
 
-        if (savedToken) {
-          const webDavConfigRes = await fetch('/api/storage?getConfig=webdav', {
-            headers: buildAuthHeaders(savedToken),
-          });
-          if (webDavConfigRes.ok) {
-            const webDavConfigData = await webDavConfigRes.json();
-            if (webDavConfigData && (webDavConfigData.url || webDavConfigData.username || webDavConfigData.password || webDavConfigData.enabled !== undefined)) {
-              setWebDavConfig(webDavConfigData);
-              localStorage.setItem(WEBDAV_CONFIG_KEY, JSON.stringify(webDavConfigData));
-            }
+        if (aiConfigResult.status === 'fulfilled' && aiConfigResult.value?.ok) {
+          const aiConfigData = await aiConfigResult.value.json();
+          if (aiConfigData && Object.keys(aiConfigData).length > 0) {
+            const normalizedAIConfig = normalizeAIConfig(aiConfigData, fallbackApiKey);
+            setAiConfig(normalizedAIConfig);
+            localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(normalizedAIConfig));
+          }
+        }
+
+        if (webDavConfigResult.status === 'fulfilled' && webDavConfigResult.value?.ok) {
+          const webDavConfigData = await webDavConfigResult.value.json();
+          if (webDavConfigData && (webDavConfigData.url || webDavConfigData.username || webDavConfigData.password || webDavConfigData.enabled !== undefined)) {
+            setWebDavConfig(webDavConfigData);
+            localStorage.setItem(WEBDAV_CONFIG_KEY, JSON.stringify(webDavConfigData));
           }
         }
       } catch (e) {
@@ -213,8 +230,10 @@ export const useAppBootstrap = ({
 
       if (!hasCloudData) {
         loadFromLocal();
-        setSearchMode('internal');
-        setExternalSearchSources(createDefaultSearchSources());
+        if (!hasSearchConfig) {
+          setSearchMode('internal');
+          setExternalSearchSources(createDefaultSearchSources());
+        }
       }
 
       setIsLoadingSearchConfig(false);
@@ -230,18 +249,20 @@ export const fetchProtectedConfigsAfterLogin = async ({
   buildAuthHeaders,
   setAiConfig,
   setWebDavConfig,
+  fallbackApiKey = '',
 }: {
   password: string;
   buildAuthHeaders: (token?: string | null, extraHeaders?: Record<string, string>) => Record<string, string>;
   setAiConfig: (config: AIConfig) => void;
   setWebDavConfig: (config: WebDavConfig) => void;
+  fallbackApiKey?: string;
 }) => {
   try {
     const aiConfigRes = await fetch('/api/storage?getConfig=ai', { headers: buildAuthHeaders(password) });
     if (aiConfigRes.ok) {
       const aiConfigData = await aiConfigRes.json();
       if (aiConfigData && Object.keys(aiConfigData).length > 0) {
-        const normalizedAIConfig = normalizeAIConfig(aiConfigData);
+        const normalizedAIConfig = normalizeAIConfig(aiConfigData, fallbackApiKey);
         setAiConfig(normalizedAIConfig);
         localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(normalizedAIConfig));
       }

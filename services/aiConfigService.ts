@@ -11,6 +11,7 @@ const DEFAULT_GEMINI_PROVIDER_ID = 'gemini-default';
 const DEFAULT_OPENAI_PROVIDER_ID = 'openai-default';
 
 const createProviderId = () => `provider-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+export const getDefaultAIModel = (provider: AIProvider) => provider === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini';
 
 export const getDefaultAIConfig = (apiKey = ''): AIConfig => ({
   activeProviderId: DEFAULT_GEMINI_PROVIDER_ID,
@@ -21,7 +22,7 @@ export const getDefaultAIConfig = (apiKey = ''): AIConfig => ({
       provider: 'gemini',
       apiKey,
       baseUrl: '',
-      model: 'gemini-2.5-flash',
+      model: getDefaultAIModel('gemini'),
       description: 'Google Gemini 官方模型',
     },
   ],
@@ -33,7 +34,7 @@ export const createBlankAIProvider = (provider: AIProvider = 'openai'): AIProvid
   provider,
   apiKey: '',
   baseUrl: provider === 'openai' ? 'https://api.openai.com/v1' : '',
-  model: provider === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini',
+  model: getDefaultAIModel(provider),
   description: provider === 'gemini' ? 'Google Gemini 官方模型' : '兼容 OpenAI Chat Completions 的 API',
 });
 
@@ -54,12 +55,12 @@ const normalizeProvider = (value: unknown, fallbackIndex: number): AIProviderCon
     baseUrl: typeof raw.baseUrl === 'string' ? raw.baseUrl : '',
     model: typeof raw.model === 'string' && raw.model.trim()
       ? raw.model.trim()
-      : provider === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini',
+      : getDefaultAIModel(provider),
     description: typeof raw.description === 'string' ? raw.description : '',
   };
 };
 
-const migrateLegacyAIConfig = (legacy: LegacyAIConfig): AIConfig => {
+const migrateLegacyAIConfig = (legacy: LegacyAIConfig, fallbackApiKey = ''): AIConfig => {
   const provider = legacy.provider === 'openai' ? 'openai' : 'gemini';
   const id = provider === 'gemini' ? DEFAULT_GEMINI_PROVIDER_ID : DEFAULT_OPENAI_PROVIDER_ID;
   const name = provider === 'gemini' ? 'Google Gemini' : 'OpenAI Compatible';
@@ -71,11 +72,11 @@ const migrateLegacyAIConfig = (legacy: LegacyAIConfig): AIConfig => {
         id,
         name,
         provider,
-        apiKey: typeof legacy.apiKey === 'string' ? legacy.apiKey : '',
+        apiKey: typeof legacy.apiKey === 'string' ? legacy.apiKey : fallbackApiKey,
         baseUrl: typeof legacy.baseUrl === 'string' ? legacy.baseUrl : '',
         model: typeof legacy.model === 'string' && legacy.model.trim()
           ? legacy.model.trim()
-          : provider === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini',
+          : getDefaultAIModel(provider),
         description: provider === 'gemini' ? 'Google Gemini 官方模型' : '兼容 OpenAI Chat Completions 的 API',
       },
     ],
@@ -86,7 +87,7 @@ export const normalizeAIConfig = (value: unknown, fallbackApiKey = ''): AIConfig
   if (!value || typeof value !== 'object') return getDefaultAIConfig(fallbackApiKey);
 
   const raw = value as Partial<AIConfig> & LegacyAIConfig;
-  if (!Array.isArray(raw.providers)) return migrateLegacyAIConfig(raw);
+  if (!Array.isArray(raw.providers)) return migrateLegacyAIConfig(raw, fallbackApiKey);
 
   const seenIds = new Set<string>();
   const providers = raw.providers
@@ -114,4 +115,3 @@ export const getActiveAIProvider = (config: AIConfig): AIProviderConfig => {
   const normalized = normalizeAIConfig(config);
   return normalized.providers.find(provider => provider.id === normalized.activeProviderId) || normalized.providers[0];
 };
-

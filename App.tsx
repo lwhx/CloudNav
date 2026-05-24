@@ -281,11 +281,13 @@ function App() {
     setSelectedSearchSource,
     setIsLoadingSearchConfig,
     setSiteSettings,
+    setAiConfig,
     setWebDavConfig,
     setPrefillLink,
     setEditingLink,
     setIsModalOpen,
     setIsAuthOpen,
+    fallbackApiKey: process.env.API_KEY || '',
   });
 
   const handleLogin = async (password: string): Promise<boolean> => {
@@ -379,36 +381,13 @@ function App() {
             }
             
             // 登录成功后，从KV空间加载AI配置
-            try {
-                const aiConfigRes = await fetch('/api/storage?getConfig=ai', {
-                    headers: buildAuthHeaders(password)
-                });
-                if (aiConfigRes.ok) {
-                    const aiConfigData = await aiConfigRes.json();
-                    if (aiConfigData && Object.keys(aiConfigData).length > 0) {
-                        const normalizedAIConfig = normalizeAIConfig(aiConfigData, process.env.API_KEY || '');
-                        setAiConfig(normalizedAIConfig);
-                        localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(normalizedAIConfig));
-                    }
-                }
-            } catch (e) {
-                console.warn("Failed to fetch AI config after login.", e);
-            }
-
-            try {
-                const webDavConfigRes = await fetch('/api/storage?getConfig=webdav', {
-                    headers: buildAuthHeaders(password)
-                });
-                if (webDavConfigRes.ok) {
-                    const webDavConfigData = await webDavConfigRes.json();
-                    if (webDavConfigData && (webDavConfigData.url || webDavConfigData.username || webDavConfigData.password || webDavConfigData.enabled !== undefined)) {
-                        setWebDavConfig(webDavConfigData);
-                        localStorage.setItem(WEBDAV_CONFIG_KEY, JSON.stringify(webDavConfigData));
-                    }
-                }
-            } catch (e) {
-                console.warn("Failed to fetch WebDAV config after login.", e);
-            }
+            await fetchProtectedConfigsAfterLogin({
+                password,
+                buildAuthHeaders,
+                setAiConfig,
+                setWebDavConfig,
+                fallbackApiKey: process.env.API_KEY || '',
+            });
             
             return true;
         }
