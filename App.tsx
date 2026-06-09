@@ -201,6 +201,16 @@ function App() {
     onSyncError: () => {
       showToast('云端同步失败，本机已保存', 'error');
     },
+    onSyncOffline: () => {
+      showToast('当前未连接云端，本地修改暂存本机', 'warning');
+    },
+    onSyncRetrying: (attempt, nextDelayMs) => {
+      const seconds = Math.round(nextDelayMs / 1000);
+      showToast(`云端同步失败，${seconds}秒后重试（第 ${attempt} 次）`, 'warning');
+    },
+    onSyncGiveUp: () => {
+      showToast('云端同步多次失败，请检查网络后手动重试', 'error');
+    },
   });
 
   const {

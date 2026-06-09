@@ -11,9 +11,15 @@ interface UseAppDataSyncOptions {
   buildAuthHeaders: BuildAuthHeaders;
   onAuthExpired: () => void;
   onSyncError: () => void;
+  onSyncOffline?: () => void;
+  onSyncRetrying?: (attempt: number, nextDelayMs: number) => void;
+  onSyncGiveUp?: () => void;
 }
 
 const SYNC_DEBOUNCE_MS = 800;
+const SYNC_RETRY_BASE_MS = 1000;
+const SYNC_RETRY_MAX_MS = 30000;
+const SYNC_RETRY_MAX_ATTEMPTS = 6;
 
 type PendingSyncPayload = {
   links: LinkItem[];
@@ -22,7 +28,7 @@ type PendingSyncPayload = {
   token: string;
 };
 
-export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onSyncError }: UseAppDataSyncOptions) => {
+export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onSyncError, onSyncOffline, onSyncRetrying, onSyncGiveUp }: UseAppDataSyncOptions) => {
   const [links, setLinks] = useState<LinkItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryGroups, setCategoryGroups] = useState<CategoryGroup[]>([DEFAULT_CATEGORY_GROUP]);
@@ -30,6 +36,11 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
   const debounceTimerRef = useRef<number | null>(null);
   const pendingSyncRef = useRef<PendingSyncPayload | null>(null);
   const isSyncingRef = useRef(false);
+  const retryTimerRef = useRef<number | null>(null);
+  const retryAttemptRef = useRef(0);
+  const lastFailedPayloadRef = useRef<PendingSyncPayload | null>(null);
+  const flushSyncQueueRef = useRef<() => Promise<void>>(async () => {});
+  const scheduleRetryRef = useRef<(payload: PendingSyncPayload) => void>(() => {});
 
   const applyData = useCallback((newLinks: LinkItem[], newCategories: Category[], newCategoryGroups?: CategoryGroup[]) => {
     const normalized = normalizeAppData({
@@ -57,7 +68,7 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
     newCategories: Category[],
     token: string,
     newCategoryGroups?: CategoryGroup[],
-  ) => {
+  ): Promise<{ ok: boolean; authExpired: boolean }> => {
     setSyncStatus('saving');
     try {
       const response = await fetch('/api/storage', {
@@ -71,7 +82,7 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
       if (response.status === 401) {
         onAuthExpired();
         setSyncStatus('error');
-        return false;
+        return { ok: false, authExpired: true };
       }
 
       if (!response.ok) {
@@ -80,14 +91,20 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
       }
 
       setSyncStatus('saved');
-      return true;
+      return { ok: true, authExpired: false };
     } catch (error) {
       console.error('Sync failed', error);
       setSyncStatus('error');
-      onSyncError();
-      return false;
+      return { ok: false, authExpired: false };
     }
-  }, [buildAuthHeaders, categoryGroups, onAuthExpired, onSyncError]);
+  }, [buildAuthHeaders, categoryGroups, onAuthExpired]);
+
+  const clearRetryTimer = useCallback(() => {
+    if (retryTimerRef.current) {
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
 
   const flushSyncQueue = useCallback(async () => {
     if (isSyncingRef.current || !pendingSyncRef.current) return;
@@ -97,12 +114,53 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
     isSyncingRef.current = true;
 
     try {
-      await syncToCloud(payload.links, payload.categories, payload.token, payload.categoryGroups);
+      const result = await syncToCloud(payload.links, payload.categories, payload.token, payload.categoryGroups);
+      if (result.ok) {
+        retryAttemptRef.current = 0;
+        lastFailedPayloadRef.current = null;
+        clearRetryTimer();
+      } else if (result.authExpired) {
+        // 鉴权失效：保留 pending，等待重新登录后由 updateData 重新 schedule
+        retryAttemptRef.current = 0;
+        lastFailedPayloadRef.current = null;
+        clearRetryTimer();
+        onSyncError?.();
+      } else {
+        // 网络或服务端错误：按指数退避重试
+        scheduleRetryRef.current(payload);
+      }
     } finally {
       isSyncingRef.current = false;
-      if (pendingSyncRef.current) void flushSyncQueue();
+      if (pendingSyncRef.current) void flushSyncQueueRef.current();
     }
-  }, [syncToCloud]);
+  }, [clearRetryTimer, onSyncError, syncToCloud]);
+
+  // 同步保存到 ref，使 scheduleRetry / online 事件可调用最新版本
+  flushSyncQueueRef.current = flushSyncQueue;
+
+  const scheduleRetry = useCallback((payload: PendingSyncPayload) => {
+    clearRetryTimer();
+    lastFailedPayloadRef.current = payload;
+    const attempt = retryAttemptRef.current + 1;
+    if (attempt > SYNC_RETRY_MAX_ATTEMPTS) {
+      retryAttemptRef.current = 0;
+      lastFailedPayloadRef.current = null;
+      onSyncGiveUp?.();
+      onSyncError?.();
+      return;
+    }
+    retryAttemptRef.current = attempt;
+    const delay = Math.min(SYNC_RETRY_BASE_MS * 2 ** (attempt - 1), SYNC_RETRY_MAX_MS);
+    onSyncRetrying?.(attempt, delay);
+    retryTimerRef.current = window.setTimeout(() => {
+      retryTimerRef.current = null;
+      pendingSyncRef.current = payload;
+      void flushSyncQueueRef.current();
+    }, delay);
+  }, [clearRetryTimer, onSyncError, onSyncGiveUp, onSyncRetrying]);
+
+  // 同步保存到 ref，使 flushSyncQueue 可调用最新版本
+  scheduleRetryRef.current = scheduleRetry;
 
   const scheduleSync = useCallback((newLinks: LinkItem[], newCategories: Category[], token: string, newCategoryGroups: CategoryGroup[]) => {
     pendingSyncRef.current = { links: newLinks, categories: newCategories, categoryGroups: newCategoryGroups, token };
@@ -120,10 +178,14 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
     const normalizedGroups = normalized.categoryGroups || [DEFAULT_CATEGORY_GROUP];
     saveLocalAppData(normalized.links, normalized.categories, normalizedGroups);
 
+    // 云端写入接口需要有效 token；未登录时只保存本地，避免无 token 写入反复失败。
     if (authToken) {
       scheduleSync(normalized.links, normalized.categories, authToken, normalizedGroups);
+    } else {
+      setSyncStatus('offline');
+      onSyncOffline?.();
     }
-  }, [applyData, authToken, scheduleSync]);
+  }, [applyData, authToken, onSyncOffline, scheduleSync]);
 
   const loadLinkIcons = useCallback(async (linksToLoad: LinkItem[], categoriesToUse: Category[], token?: string) => {
     const activeToken = token || authToken;
@@ -198,9 +260,58 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
     }
   }, [applyData, authToken, categoryGroups, scheduleSync]);
 
-  useEffect(() => () => {
-    if (debounceTimerRef.current) window.clearTimeout(debounceTimerRef.current);
-  }, []);
+  // 监听页面隐藏/卸载：把待同步的本地最新数据通过 keepalive fetch 推到云端，
+  // 避免 800 ms 防抖窗口内刷新导致云端仍是旧数据、刷新后被回写覆盖。
+  useEffect(() => {
+    const flushWithKeepalive = () => {
+      const payload = pendingSyncRef.current;
+      if (!payload) return;
+
+      const envelope = createAppDataEnvelope(payload.links, payload.categories, payload.categoryGroups);
+      const body = JSON.stringify(envelope);
+
+      try {
+        const headers = buildAuthHeaders(payload.token, { 'Content-Type': 'application/json' });
+        fetch('/api/storage', { method: 'POST', headers, body, keepalive: true }).catch(() => {});
+        pendingSyncRef.current = null;
+        if (debounceTimerRef.current) {
+          window.clearTimeout(debounceTimerRef.current);
+          debounceTimerRef.current = null;
+        }
+      } catch {
+        // 静默失败，下次启动时由 useAppBootstrap 用本地最新数据反向同步
+      }
+    };
+
+    // 网络恢复时立即重试未完成的同步（重置退避计数，避免反复抖动）
+    const handleOnline = () => {
+      if (retryTimerRef.current) {
+        clearRetryTimer();
+      }
+      retryAttemptRef.current = 0;
+      const failed = lastFailedPayloadRef.current;
+      if (failed) {
+        pendingSyncRef.current = failed;
+        lastFailedPayloadRef.current = null;
+        void flushSyncQueueRef.current();
+        return;
+      }
+      if (pendingSyncRef.current) {
+        void flushSyncQueueRef.current();
+      }
+    };
+
+    window.addEventListener('pagehide', flushWithKeepalive);
+    window.addEventListener('beforeunload', flushWithKeepalive);
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('pagehide', flushWithKeepalive);
+      window.removeEventListener('beforeunload', flushWithKeepalive);
+      window.removeEventListener('online', handleOnline);
+      if (debounceTimerRef.current) window.clearTimeout(debounceTimerRef.current);
+      clearRetryTimer();
+    };
+  }, [buildAuthHeaders, clearRetryTimer]);
 
   return {
     links,

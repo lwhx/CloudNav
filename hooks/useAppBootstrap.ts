@@ -9,6 +9,12 @@ const AUTH_TIME_KEY = 'lastLoginTime';
 const WEBDAV_CONFIG_KEY = 'cloudnav_webdav_config';
 const AI_CONFIG_KEY = 'cloudnav_ai_config';
 
+const hasMeaningfulAppData = (dataLinks: LinkItem[], dataCategories: Category[], dataGroups: CategoryGroup[]) => {
+  return dataLinks.length > 0
+    || dataCategories.some(category => !DEFAULT_CATEGORIES.some(defaultCategory => defaultCategory.id === category.id && defaultCategory.name === category.name))
+    || dataGroups.some(group => group.id !== DEFAULT_CATEGORY_GROUP.id);
+};
+
 interface UseAppBootstrapOptions {
   authToken: string;
   siteSettings: SiteSettings;
@@ -163,12 +169,30 @@ export const useAppBootstrap = ({
             const cloudLinks = Array.isArray(data.links) ? data.links : [];
             const cloudCategories = Array.isArray(data.categories) ? data.categories : DEFAULT_CATEGORIES;
             const cloudCategoryGroups = Array.isArray(data.categoryGroups) ? data.categoryGroups : [DEFAULT_CATEGORY_GROUP];
-            setLinks(cloudLinks);
-            setCategories(cloudCategories);
-            setCategoryGroups(cloudCategoryGroups);
-            saveLocalAppData(cloudLinks, cloudCategories, cloudCategoryGroups);
-            loadLinkIcons(cloudLinks, cloudCategories, activeToken || undefined);
-            hasCloudData = true;
+            const cloudHasContent = hasMeaningfulAppData(cloudLinks, cloudCategories, cloudCategoryGroups);
+
+            // 读取本地缓存与时间戳，避免云端空 envelope 抹掉本地新数据
+            const localRaw = localStorage.getItem('cloudnav_data_cache');
+            const localEnvelope = localRaw ? (() => { try { return JSON.parse(localRaw); } catch { return null; } })() : null;
+            const localUpdatedAt = localEnvelope && typeof localEnvelope.updatedAt === 'number' ? localEnvelope.updatedAt : 0;
+            const localLinks = Array.isArray(localEnvelope?.links) ? localEnvelope.links : [];
+            const localCategories = Array.isArray(localEnvelope?.categories) ? localEnvelope.categories : [];
+            const localGroups = Array.isArray(localEnvelope?.categoryGroups) ? localEnvelope.categoryGroups : [DEFAULT_CATEGORY_GROUP];
+            const localHasContent = hasMeaningfulAppData(localLinks, localCategories, localGroups);
+            const cloudUpdatedAt = typeof data.updatedAt === 'number' ? data.updatedAt : 0;
+
+            // 决策：只有当云端有真实数据时，才考虑用云端覆盖；否则保留本地最新
+            if (cloudHasContent && (!localHasContent || cloudUpdatedAt >= localUpdatedAt)) {
+              setLinks(cloudLinks);
+              setCategories(cloudCategories);
+              setCategoryGroups(cloudCategoryGroups);
+              saveLocalAppData(cloudLinks, cloudCategories, cloudCategoryGroups);
+              loadLinkIcons(cloudLinks, cloudCategories, activeToken || undefined);
+              hasCloudData = true;
+            } else if (cloudHasContent && localHasContent && cloudUpdatedAt < localUpdatedAt) {
+              // 本地更新，跳过云端旧数据；后续 loadFromLocal 会恢复本地最新数据
+            }
+            // 云端完全为空 + 本地有数据：什么都不做，hasCloudData 保持 false，loadFromLocal 会保留本地
           }
         } else if (res.status === 401) {
           const errorData = await res.json();
