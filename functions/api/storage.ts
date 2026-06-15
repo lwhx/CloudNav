@@ -8,6 +8,7 @@ import {
   createSession,
   getCorsHeaders,
   getWebsiteConfig,
+  validateSessionToken,
   METADATA_RATE_LIMIT_PER_WINDOW,
   buildRateLimitResponse,
   isRateLimited,
@@ -247,10 +248,27 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
         return authCheck.response;
       }
 
-      // 有效签发时间则回显（不续期），否则开启新 session。签发会话令牌一并返回。
+      // 有效签发时间则回显（不续期），否则开启新 session。
       const authenticatedAt = (Number.isFinite(issuedAt) && issuedAt > 0) ? issuedAt : Date.now();
-      const session = await createSession(env, expiryDays);
-      return new Response(JSON.stringify({ success: true, authenticatedAt, sessionToken: session.token }), {
+
+      // 仅在「用原始密码登录」时签发新令牌；若调用方已携带有效 Bearer 令牌（续期/校验），
+      // 直接复用该令牌，避免每次校验都生成新令牌导致 KV 孤儿堆积，并防止凭单令牌无限铸造。
+      const bearerHeader = request.headers.get('Authorization') || '';
+      const bearerMatch = bearerHeader.match(/^Bearer\s+(.+)$/i);
+      let sessionToken: string | undefined;
+      if (bearerMatch) {
+        const existing = await validateSessionToken(env, bearerMatch[1].trim(), expiryDays);
+        if (existing.valid) {
+          sessionToken = bearerMatch[1].trim();
+        }
+      }
+      if (!sessionToken) {
+        // 真正的密码登录路径：签发新令牌。
+        const session = await createSession(env, expiryDays);
+        sessionToken = session.token;
+      }
+
+      return new Response(JSON.stringify({ success: true, authenticatedAt, sessionToken }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
