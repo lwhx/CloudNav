@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Bot, Key, Globe, Sparkles, PauseCircle, Wrench, Box, Copy, Check, LayoutTemplate, Info, Download, Sidebar, Keyboard, MousePointerClick, AlertTriangle, Package, Zap, Menu, Upload, Plus, Trash2 } from 'lucide-react';
-import { AIConfig, AIProvider, AIProviderConfig, LinkItem, Category, SiteSettings, AICategorySuggestion } from '../types';
+import { AIConfig, AIProvider, AIProviderConfig, LinkItem, Category, SiteSettings, AICategorySuggestion, AIOrganizeResult } from '../types';
 import { normalizeTags } from '../services/appDataPersistence';
 import { createBlankAIProvider, getActiveAIProvider, getDefaultAIModel, normalizeAIConfig } from '../services/aiConfigService';
 import JSZip from 'jszip';
@@ -261,16 +261,24 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     setProgress({ current: 0, total: targetLinks.length });
 
     const { organizeLink } = await import('../services/geminiService');
-    let currentLinks = [...links];
     // tagPool 在循环外算一次，避免并发/O(N²) 重复 flatMap。
-    const baseTagPool = normalizeTags(currentLinks.flatMap(item => item.tags || []));
-    let failedCount = 0;
+    const baseTagPool = normalizeTags(links.flatMap(item => item.tags || []));
+    const activeCategories = categories.filter(category => !category.deletedAt);
 
-    for (let i = 0; i < targetLinks.length; i++) {
-        if (shouldStopRef.current) break;
+    // 并发整理：每个链接独立请求，结果收集到 patches，全部完成后一次性合并，
+    // 避免并发下对 currentLinks 的竞态写。并发上限 4，兼顾速度与 API 限流。
+    const CONCURRENCY = 4;
+    type Patch = { linkId: string; result: AIOrganizeResult };
+    const patches: Patch[] = [];
+    const failed = new Set<string>();
+    let done = 0;
+    let cursor = 0;
 
-        const link = targetLinks[i];
-        try {
+    const processOne = async () => {
+        while (cursor < targetLinks.length) {
+            if (shouldStopRef.current) return;
+            const link = targetLinks[cursor++];
+
             // 仅对泛化标题抓取页面 meta，减少 80% 额外请求；非泛化标题用现有信息即可。
             let pageMeta: { title?: string; description?: string } | undefined;
             if (isGenericTitle(link.title)) {
@@ -287,44 +295,53 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 }
             }
 
-            const result = await organizeLink(link.title, link.url, link.description, categories.filter(category => !category.deletedAt), baseTagPool, localConfig, pageMeta);
+            try {
+                const result = await organizeLink(link.title, link.url, link.description, activeCategories, baseTagPool, localConfig, pageMeta);
 
-            // 失败判定：针对用户勾选且本条需要的字段，是否返回了有效值（修正静默丢弃 #3）。
-            const wantedDesc = options.description && (scope === 'full' || !link.description);
-            const wantedCat = options.category;
-            const wantedTags = options.tags && (scope === 'full' || !link.tags || link.tags.length === 0);
-            const gotDesc = !!result.description;
-            const gotCat = !!result.categoryId;
-            const gotTags = !!(result.tags && result.tags.length);
-            const anyWanted = wantedDesc || wantedCat || wantedTags;
-            const anyGot = (wantedDesc && gotDesc) || (wantedCat && gotCat) || (wantedTags && gotTags);
-            if (anyWanted && !anyGot) {
-                failedCount += 1;
-                setProgress({ current: i + 1, total: targetLinks.length });
-                continue;
+                // 失败判定：针对用户勾选且本条需要的字段，是否返回了有效值（修正静默丢弃 #3）。
+                const wantedDesc = options.description && (scope === 'full' || !link.description);
+                const wantedCat = options.category;
+                const wantedTags = options.tags && (scope === 'full' || !link.tags || link.tags.length === 0);
+                const gotDesc = !!result.description;
+                const gotCat = !!result.categoryId;
+                const gotTags = !!(result.tags && result.tags.length);
+                const anyWanted = wantedDesc || wantedCat || wantedTags;
+                const anyGot = (wantedDesc && gotDesc) || (wantedCat && gotCat) || (wantedTags && gotTags);
+                if (anyWanted && !anyGot) {
+                    failed.add(link.id);
+                } else {
+                    patches.push({ linkId: link.id, result });
+                }
+            } catch (e) {
+                failed.add(link.id);
+                console.error(`Failed to organize ${link.title}`, e instanceof Error ? e.name : 'unknown');
+            } finally {
+                done++;
+                setProgress({ current: done, total: targetLinks.length });
             }
-
-            currentLinks = currentLinks.map(item => {
-                if (item.id !== link.id) return item;
-                return {
-                    ...item,
-                    description: options.description && result.description ? result.description : item.description,
-                    categoryId: options.category && result.categoryId && categories.some(category => !category.deletedAt && category.id === result.categoryId)
-                        ? result.categoryId
-                        : item.categoryId,
-                    tags: options.tags && result.tags?.length
-                        ? normalizeTags([...(item.tags || []), ...result.tags])
-                        : item.tags,
-                };
-            });
-            setProgress({ current: i + 1, total: targetLinks.length });
-        } catch (e) {
-            failedCount += 1;
-            console.error(`Failed to organize ${link.title}`, e instanceof Error ? e.name : 'unknown');
-            setProgress({ current: i + 1, total: targetLinks.length });
         }
-    }
+    };
 
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targetLinks.length) }, () => processOne()));
+
+    // 一次性合并：按 patch 应用变更，避免并发竞态。
+    const patchMap = new Map(patches.map(p => [p.linkId, p.result]));
+    const currentLinks = links.map(item => {
+        const result = patchMap.get(item.id);
+        if (!result) return item;
+        return {
+            ...item,
+            description: options.description && result.description ? result.description : item.description,
+            categoryId: options.category && result.categoryId && activeCategories.some(category => category.id === result.categoryId)
+                ? result.categoryId
+                : item.categoryId,
+            tags: options.tags && result.tags?.length
+                ? normalizeTags([...(item.tags || []), ...result.tags])
+                : item.tags,
+        };
+    });
+
+    const failedCount = failed.size;
     onUpdateLinks(currentLinks);
     setIsProcessing(false);
     const stopMessage = shouldStopRef.current ? 'AI 批量整理已停止，已保存完成部分' : 'AI 批量整理完成';
