@@ -7,7 +7,8 @@ const getSafeImageContentType = (contentType: string | null) => {
     'image/jpeg',
     'image/gif',
     'image/webp',
-    'image/svg+xml',
+    // 'image/svg+xml' removed: SVG can embed <script>; as <img src=data:...> it
+    // executes in app origin → stored XSS. Bitmap formats have no such risk.
     'image/x-icon',
     'image/vnd.microsoft.icon',
   ]);

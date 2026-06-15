@@ -193,8 +193,9 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     }
     
     // 保存链接数据
+    // 注意：onSave 类型是 Omit<LinkItem, 'id' | 'createdAt'>，绝不能传 id——
+    // handleEditLink 用 {...l, ...data} 展开，传 id:'' 会覆盖真实 id 导致链接失忆。
     onSave({
-      id: isEditing ? initialData?.id || '' : '',
       title,
       url: finalUrl,
       icon: finalIcon,

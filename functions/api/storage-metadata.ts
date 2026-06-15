@@ -17,11 +17,17 @@ const decodeHtmlEntities = (value: string) => value
     return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : '';
   });
 
-const normalizeTitle = (value: string) => decodeHtmlEntities(value)
-  .replace(/<[^>]*>/g, '')
-  .replace(/\s+/g, ' ')
-  .trim()
-  .slice(0, 200);
+// 顺序很重要：先 strip 标签，再 decode 实体，然后再 strip 一次。
+// 若先 decode，&#60;script&#62; → <script> 会逃过第一轮 strip，留存进 KV 构成存储型 XSS。
+const normalizeTitle = (value: string) => {
+  const stripped = value.replace(/<[^>]*>/g, '');
+  const decoded = decodeHtmlEntities(stripped);
+  return decoded
+    .replace(/<[^>]*>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200);
+};
 
 const getTagAttribute = (tag: string, attributeName: string) => {
   const attributes = new Map<string, string>();

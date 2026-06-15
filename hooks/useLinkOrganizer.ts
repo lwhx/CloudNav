@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { DragEndEvent, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { Category, LinkItem } from '../types';
@@ -39,6 +39,11 @@ export const useLinkOrganizer = ({
   const [isSortingPinned, setIsSortingPinned] = useState(false);
   const [isBatchEditMode, setIsBatchEditMode] = useState(false);
   const [selectedLinks, setSelectedLinks] = useState<Set<string>>(new Set());
+
+  // 切换分类时清空批量选择，避免上个分类的选中项被误应用到新分类的批量操作。
+  useEffect(() => {
+    setSelectedLinks(new Set());
+  }, [selectedCategory]);
 
   const toggleBatchEditMode = useCallback(() => {
     if (!requireAuth()) return;
@@ -120,12 +125,14 @@ export const useLinkOrganizer = ({
       ? Math.max(...categoryLinks.map(link => link.order || 0))
       : -1;
 
+    const now = Date.now();
     const newLink: LinkItem = {
       ...data,
       url: processedUrl,
       tags: normalizeTags(data.tags),
-      id: Date.now().toString(),
-      createdAt: Date.now(),
+      // 用 UUID 避免批量添加/快速保存时同毫秒 id 碰撞
+      id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `${now}-${Math.random().toString(36).slice(2)}`,
+      createdAt: now,
       order: maxOrder + 1,
       pinnedOrder: data.pinned ? links.filter(l => l.pinned).length : undefined,
     };
@@ -236,7 +243,7 @@ export const useLinkOrganizer = ({
           if (b.pinned) return 1;
           const aOrder = a.order !== undefined ? a.order : a.createdAt;
           const bOrder = b.order !== undefined ? b.order : b.createdAt;
-          return bOrder - aOrder;
+          return aOrder - bOrder;
         });
 
         updateData(updatedLinks, categories);

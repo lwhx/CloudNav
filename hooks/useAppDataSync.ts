@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Category, CategoryGroup, DEFAULT_CATEGORIES, DEFAULT_CATEGORY_GROUP, INITIAL_LINKS, LinkItem } from '../types';
 import { createAppDataEnvelope, loadLocalAppData, normalizeAppData, saveLocalAppData } from '../services/appDataPersistence';
+import { mergeAppData } from '../services/mergeAppData';
 
 type SyncStatus = 'idle' | 'saving' | 'saved' | 'error' | 'offline';
 
@@ -30,6 +31,9 @@ type PendingSyncPayload = {
 
 export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onSyncError, onSyncOffline, onSyncRetrying, onSyncGiveUp }: UseAppDataSyncOptions) => {
   const [links, setLinks] = useState<LinkItem[]>([]);
+  // 镜像最新 links，供异步回调（如 loadLinkIcons）读取当前 state，
+  // 避免覆盖期间发生的编辑。useEffect 保证任意 setter 路径都同步。
+  const linksRef = useRef<LinkItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryGroups, setCategoryGroups] = useState<CategoryGroup[]>([DEFAULT_CATEGORY_GROUP]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
@@ -82,7 +86,12 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
       if (response.status === 401) {
         onAuthExpired();
         setSyncStatus('error');
-        return { ok: false, authExpired: true };
+        // 保持 linksRef 与 links state 同步（所有 setter 路径都覆盖）。
+  useEffect(() => {
+    linksRef.current = links;
+  }, [links]);
+
+  return { ok: false, authExpired: true };
       }
 
       if (!response.ok) {
@@ -191,23 +200,23 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
     const activeToken = token || authToken;
     if (!activeToken) return;
 
-    const updatedLinks = [...linksToLoad];
+    // 不 mutate 传入的 link 对象，否则会污染当前 React state 的共享引用。
+    const domainOf = (rawUrl: string): string | null => {
+      try {
+        let domain = rawUrl;
+        if (!domain.startsWith('http://') && !domain.startsWith('https://')) domain = 'https://' + domain;
+        if (!domain.startsWith('http://') && !domain.startsWith('https://')) return null;
+        return new URL(domain).hostname;
+      } catch {
+        return null;
+      }
+    };
+
     const domainsToFetch = new Set<string>();
-
-    for (const link of updatedLinks) {
-      if (link.url && !link.deletedAt) {
-        try {
-          let domain = link.url;
-          if (!link.url.startsWith('http://') && !link.url.startsWith('https://')) domain = 'https://' + link.url;
-
-          if (domain.startsWith('http://') || domain.startsWith('https://')) {
-            const urlObj = new URL(domain);
-            domain = urlObj.hostname;
-            if (!link.icon || !link.icon.startsWith('data:')) domainsToFetch.add(domain);
-          }
-        } catch (e) {
-          console.error('Failed to parse URL for icon loading', e);
-        }
+    for (const link of linksToLoad) {
+      if (link.url && !link.deletedAt && (!link.icon || !link.icon.startsWith('data:'))) {
+        const domain = domainOf(link.url);
+        if (domain) domainsToFetch.add(domain);
       }
     }
 
@@ -227,38 +236,34 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
     });
 
     const iconResults = await Promise.all(iconPromises);
-    let hasChanges = false;
-
+    const iconByDomain = new Map<string, string>();
     iconResults.forEach(result => {
-      if (!result) return;
-
-      updatedLinks.forEach(linkToUpdate => {
-        if (!linkToUpdate.url) return;
-
-        try {
-          let domain = linkToUpdate.url;
-          if (!linkToUpdate.url.startsWith('http://') && !linkToUpdate.url.startsWith('https://')) domain = 'https://' + linkToUpdate.url;
-          if (!domain.startsWith('http://') && !domain.startsWith('https://')) return;
-
-          const urlObj = new URL(domain);
-          if (urlObj.hostname !== result.domain) return;
-
-          if (linkToUpdate.icon !== result.icon) {
-            linkToUpdate.icon = result.icon;
-            hasChanges = true;
-          }
-        } catch {
-          return;
-        }
-      });
+      if (result) iconByDomain.set(result.domain, result.icon);
     });
 
-    if (hasChanges) {
-      const normalized = applyData(updatedLinks, categoriesToUse, categoryGroups);
-      saveLocalAppData(normalized.links, normalized.categories, normalized.categoryGroups);
-      scheduleSync(normalized.links, normalized.categories, activeToken, normalized.categoryGroups || [DEFAULT_CATEGORY_GROUP]);
+    if (iconByDomain.size === 0) return;
+
+    // 在当前最新 state 上打补丁（用 ref 读取，避免覆盖图标加载期间发生的用户编辑）。
+    // 副作用放在 updater 外执行，避免 React StrictMode 双调用导致重复写入/同步。
+    const currentLinks = linksRef.current;
+    let changed = false;
+    const nextLinks = currentLinks.map(link => {
+      if (!link.url || link.deletedAt) return link;
+      const domain = domainOf(link.url);
+      if (!domain) return link;
+      const newIcon = iconByDomain.get(domain);
+      if (!newIcon || newIcon === link.icon) return link;
+      changed = true;
+      return { ...link, icon: newIcon };
+    });
+    if (!changed) return;
+
+    setLinks(nextLinks);
+    saveLocalAppData(nextLinks, categoriesToUse, categoryGroups);
+    if (activeToken) {
+      scheduleSync(nextLinks, categoriesToUse, activeToken, categoryGroups);
     }
-  }, [applyData, authToken, categoryGroups, scheduleSync]);
+  }, [authToken, categoryGroups, scheduleSync]);
 
   // 监听页面隐藏/卸载：把待同步的本地最新数据通过 keepalive fetch 推到云端，
   // 避免 800 ms 防抖窗口内刷新导致云端仍是旧数据、刷新后被回写覆盖。
@@ -290,13 +295,25 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
       }
       retryAttemptRef.current = 0;
       const failed = lastFailedPayloadRef.current;
+      const pending = pendingSyncRef.current;
+      if (failed && pending) {
+        // 离线期间又有了新编辑：合并失败 payload 和最新 pending，避免新编辑被旧 payload 覆盖丢弃
+        const merged = mergeAppData({
+          local: { links: pending.links, categories: pending.categories, categoryGroups: pending.categoryGroups },
+          cloud: { links: failed.links, categories: failed.categories, categoryGroups: failed.categoryGroups },
+        });
+        pendingSyncRef.current = { links: merged.links, categories: merged.categories, categoryGroups: merged.categoryGroups || [DEFAULT_CATEGORY_GROUP], token: pending.token };
+        lastFailedPayloadRef.current = null;
+        void flushSyncQueueRef.current();
+        return;
+      }
       if (failed) {
         pendingSyncRef.current = failed;
         lastFailedPayloadRef.current = null;
         void flushSyncQueueRef.current();
         return;
       }
-      if (pendingSyncRef.current) {
+      if (pending) {
         void flushSyncQueueRef.current();
       }
     };

@@ -1,4 +1,6 @@
 import {
+  AUTH_TIME_HEADER,
+  buildUnauthorizedResponse,
   Env,
   FAVICON_CACHE_TTL_SECONDS,
   FAVICON_FAILURE_CACHE_TTL_SECONDS,
@@ -194,12 +196,29 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     const body = await request.json();
 
     if (body.authOnly) {
+      // authOnly 兼具"首次登录"和"会话续期校验"两种用途。
+      const websiteConfig = await getWebsiteConfig(env);
+      const expiryDays = websiteConfig.passwordExpiryDays ?? 7;
+      const providedIssuedAt = request.headers.get(AUTH_TIME_HEADER);
+      const issuedAt = providedIssuedAt ? Number(providedIssuedAt) : NaN;
+
+      // 首次登录（无有效签发时间）：密码正确就放行，返回当前时间作为新 session 起点。
+      // 续期校验（有有效签发时间）：未过期才放行，且回显原签发时间，不刷新会话。
+      if (expiryDays > 0 && Number.isFinite(issuedAt) && issuedAt > 0) {
+        const expiryMs = expiryDays * 24 * 60 * 60 * 1000;
+        if (Date.now() - issuedAt > expiryMs) {
+          return buildUnauthorizedResponse('密码已过期，请重新输入', corsHeaders);
+        }
+      }
+
       const authCheck = await validateAuth(request, env, corsHeaders);
       if (!authCheck.ok) {
         return authCheck.response;
       }
 
-      return new Response(JSON.stringify({ success: true, authenticatedAt: Date.now() }), {
+      // 有效签发时间则回显（不续期），否则开启新 session
+      const authenticatedAt = (Number.isFinite(issuedAt) && issuedAt > 0) ? issuedAt : Date.now();
+      return new Response(JSON.stringify({ success: true, authenticatedAt }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }

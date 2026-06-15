@@ -31,7 +31,13 @@ const readStoredAppData = async (env: Env): Promise<StoredAppData> => {
     return { links: [], categories: [] };
   }
 
-  const parsedData = JSON.parse(currentDataStr) as Partial<StoredAppData>;
+  // 防御性解析：KV 数据若损坏不应让快速添加整个崩溃。
+  let parsedData: Partial<StoredAppData>;
+  try {
+    parsedData = JSON.parse(currentDataStr) as Partial<StoredAppData>;
+  } catch {
+    return { links: [], categories: [] };
+  }
   return {
     links: Array.isArray(parsedData.links) ? parsedData.links : [],
     categories: Array.isArray(parsedData.categories) ? parsedData.categories : [],
@@ -128,7 +134,8 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     const targetCategory = findTargetCategory(currentData.categories, newLinkData.categoryId);
     const createdAt = Date.now();
     const newLink: LinkItem = {
-      id: createdAt.toString(),
+      // 用 UUID 避免同毫秒快速添加时的 id 碰撞
+      id: crypto.randomUUID(),
       title: newLinkData.title,
       url: newLinkData.url,
       description: newLinkData.description || '',

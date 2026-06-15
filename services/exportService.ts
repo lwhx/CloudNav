@@ -43,8 +43,8 @@ export const generateBookmarkHtml = (links: LinkItem[], categories: Category[]):
     
     catLinks.forEach(link => {
       const date = Math.floor(link.createdAt / 1000);
-      const iconAttr = link.icon ? ` ICON="${link.icon}"` : '';
-      html += `        <DT><A HREF="${link.url}" ADD_DATE="${date}"${iconAttr}>${escapeHtml(link.title)}</A>\n`;
+      const iconAttr = link.icon ? ` ICON="${escapeHtml(link.icon)}"` : '';
+      html += `        <DT><A HREF="${escapeHtml(link.url)}" ADD_DATE="${date}"${iconAttr}>${escapeHtml(link.title)}</A>\n`;
     });
 
     html += `    </DL><p>\n`;
@@ -59,7 +59,7 @@ export const generateBookmarkHtml = (links: LinkItem[], categories: Category[]):
     html += `    <DL><p>\n`;
     uncategorized.forEach(link => {
         const date = Math.floor(link.createdAt / 1000);
-        html += `        <DT><A HREF="${link.url}" ADD_DATE="${date}">${escapeHtml(link.title)}</A>\n`;
+        html += `        <DT><A HREF="${escapeHtml(link.url)}" ADD_DATE="${date}">${escapeHtml(link.title)}</A>\n`;
     });
     html += `    </DL><p>\n`;
   }

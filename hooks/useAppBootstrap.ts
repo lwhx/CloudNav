@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { AIConfig, Category, CategoryGroup, DEFAULT_CATEGORIES, DEFAULT_CATEGORY_GROUP, LinkItem, SearchConfig, SiteSettings, WebDavConfig } from '../types';
 import { createDefaultSearchSources } from './useSearchConfig';
 import { saveLocalAppData } from '../services/appDataPersistence';
+import { mergeAppData } from '../services/mergeAppData';
 import { normalizeAIConfig } from '../services/aiConfigService';
 
 const AUTH_KEY = 'cloudnav_auth_token';
@@ -182,15 +183,20 @@ export const useAppBootstrap = ({
             const cloudUpdatedAt = typeof data.updatedAt === 'number' ? data.updatedAt : 0;
 
             // 决策：只有当云端有真实数据时，才考虑用云端覆盖；否则保留本地最新
-            if (cloudHasContent && (!localHasContent || cloudUpdatedAt >= localUpdatedAt)) {
-              setLinks(cloudLinks);
-              setCategories(cloudCategories);
-              setCategoryGroups(cloudCategoryGroups);
-              saveLocalAppData(cloudLinks, cloudCategories, cloudCategoryGroups);
-              loadLinkIcons(cloudLinks, cloudCategories, activeToken || undefined);
+            if (cloudHasContent || localHasContent) {
+              // 任一侧有真实数据：按 id 合并，保留两侧全部未删除记录。
+              // 不用整包 updatedAt 决定覆盖，因为 KV 最终一致性和客户端时钟偏差
+              // 会让"刚新增的本地链接"被旧云端快照抹掉。
+              const merged = mergeAppData({
+                local: { links: localLinks, categories: localCategories, categoryGroups: localGroups, updatedAt: localUpdatedAt },
+                cloud: { links: cloudLinks, categories: cloudCategories, categoryGroups: cloudCategoryGroups, updatedAt: cloudUpdatedAt },
+              });
+              setLinks(merged.links);
+              setCategories(merged.categories);
+              setCategoryGroups(merged.categoryGroups);
+              saveLocalAppData(merged.links, merged.categories, merged.categoryGroups);
+              loadLinkIcons(merged.links, merged.categories, activeToken || undefined);
               hasCloudData = true;
-            } else if (cloudHasContent && localHasContent && cloudUpdatedAt < localUpdatedAt) {
-              // 本地更新，跳过云端旧数据；后续 loadFromLocal 会恢复本地最新数据
             }
             // 云端完全为空 + 本地有数据：什么都不做，hasCloudData 保持 false，loadFromLocal 会保留本地
           }

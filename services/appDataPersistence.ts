@@ -176,10 +176,27 @@ const rememberLocalBackup = (raw: string | null) => {
 
 export const saveLocalAppData = (links: LinkItem[], categories: Category[], categoryGroups?: CategoryGroup[]) => {
   const currentRaw = localStorage.getItem(LOCAL_STORAGE_KEY);
-  rememberLocalBackup(currentRaw);
 
   const envelope = createAppDataEnvelope(links, categories, categoryGroups);
-  localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(envelope));
+  const serialized = JSON.stringify(envelope);
+
+  try {
+    localStorage.setItem(LOCAL_STORAGE_KEY, serialized);
+  } catch (e) {
+    // 配额满或被禁用：先清旧备份腾空间再重试。不抛出——调用方已更新 React state，
+    // 抛出会破坏一致性且无法回滚。降级为仅内存模式，下次成功写入会恢复。
+    try { clearLocalDataBackups(); } catch { /* ignore */ }
+    try { localStorage.setItem(LOCAL_STORAGE_KEY, serialized); }
+    catch { /* 配额仍满：静默降级 */ }
+    console.warn('saveLocalAppData: localStorage 写入失败，已降级为仅内存模式', e);
+  }
+
+  // 备份写入也要防 quota：rememberLocalBackup 内部无 try/catch，包一层避免
+  // 在配额耗尽路径上再次抛出，破坏"绝不抛出"的不变量。
+  try {
+    rememberLocalBackup(currentRaw);
+  } catch { /* 配额仍满：跳过备份，不影响主数据 */ }
+
   return envelope;
 };
 

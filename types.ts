@@ -10,6 +10,7 @@ export interface LinkItem {
   pinned?: boolean; // New field for pinning
   pinnedOrder?: number; // Field for pinned link sorting order
   order?: number;
+  updatedAt?: number; // Last-modified timestamp; used by cloud/local merge to resolve per-record conflicts
   deletedAt?: number;
   deletedFromCategoryId?: string;
 }

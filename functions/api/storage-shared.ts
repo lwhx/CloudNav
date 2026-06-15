@@ -51,9 +51,15 @@ export const getCorsHeaders = (request: Request) => {
 
 export const getWebsiteConfig = async (env: Env): Promise<WebsiteConfig> => {
   const websiteConfigStr = await env.CLOUDNAV_KV.get('website_config');
-  return websiteConfigStr
-    ? JSON.parse(websiteConfigStr)
-    : { requirePasswordOnVisit: false, passwordExpiryDays: 7 };
+  if (!websiteConfigStr) {
+    return { requirePasswordOnVisit: false, passwordExpiryDays: 7 };
+  }
+  // 防御性解析：若 website_config 被写坏，回退到默认值而不是抛错。
+  try {
+    return JSON.parse(websiteConfigStr);
+  } catch {
+    return { requirePasswordOnVisit: false, passwordExpiryDays: 7 };
+  }
 };
 
 export const buildUnauthorizedResponse = (message: string, corsHeaders: Record<string, string>) =>
@@ -95,7 +101,15 @@ export const validateAuth = async (
     const authIssuedAt = authIssuedAtRaw ? Number(authIssuedAtRaw) : NaN;
     const expiryMs = passwordExpiryDays * 24 * 60 * 60 * 1000;
 
-    if (Number.isFinite(authIssuedAt) && authIssuedAt > 0 && Date.now() - authIssuedAt > expiryMs) {
+    // 缺失/非数字/非正的签发时间戳视为已过期，避免省略该头绕过过期策略。
+    if (!Number.isFinite(authIssuedAt) || authIssuedAt <= 0) {
+      return {
+        ok: false,
+        response: buildUnauthorizedResponse('会话已过期，请重新输入密码', corsHeaders),
+      };
+    }
+
+    if (Date.now() - authIssuedAt > expiryMs) {
       return {
         ok: false,
         response: buildUnauthorizedResponse('密码已过期，请重新输入', corsHeaders),
@@ -137,12 +151,20 @@ export const isPrivateIPv4 = (hostname: string) => {
 
 export const isBlockedIPv6 = (hostname: string) => {
   const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  // IPv4-mapped IPv6 (::ffff:169.254.169.254 等) 把内网 v4 藏在 v6 形式里，
+  // 按内嵌 v4 部分重新校验，否则可绕过 isPrivateIPv4 实现 SSRF。
+  const v4MappedMatch = normalized.match(/^(?:::ffff:|::ffff:0:|64:ff9b::|::)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (v4MappedMatch && isPrivateIPv4(v4MappedMatch[1])) return true;
+
   return normalized === '::1'
     || normalized === '::'
     || normalized.startsWith('fc')
     || normalized.startsWith('fd')
-    || normalized.startsWith('fe80:')
-    || normalized.startsWith('ff');
+    || normalized.startsWith('fe8')   // fe80::/10 链路本地
+    || normalized.startsWith('fe9')
+    || normalized.startsWith('fea')
+    || normalized.startsWith('feb')
+    || normalized.startsWith('ff');    // ff00::/8 多播
 };
 
 export const isBlockedHostname = (hostname: string) => {

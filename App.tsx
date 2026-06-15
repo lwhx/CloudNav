@@ -348,7 +348,8 @@ function App() {
                 const lastLogin = parseInt(lastLoginTime);
                 const timeDiff = currentTime - lastLogin;
                 
-                const expiryTimeMs = (siteSettings.passwordExpiryDays || 7) > 0 ? (siteSettings.passwordExpiryDays || 7) * 24 * 60 * 60 * 1000 : 0;
+                const expiryDays = siteSettings.passwordExpiryDays ?? 7;
+                const expiryTimeMs = expiryDays > 0 ? expiryDays * 24 * 60 * 60 * 1000 : 0;
                 
                 if (expiryTimeMs > 0 && timeDiff > expiryTimeMs) {
                     clearAuthSession();
@@ -396,9 +397,13 @@ function App() {
                 buildAuthHeaders,
                 setAiConfig,
                 setWebDavConfig,
-                fallbackApiKey: process.env.API_KEY || '',
+                                fallbackApiKey: process.env.API_KEY || '',
             });
-            
+
+            // 来自书签小工具（?add_url=...）的登录：认证成功后打开链接编辑弹窗，
+            // 否则 prefillLink 数据会悬而未用，用户无感知。
+            if (prefillLink) setIsModalOpen(true);
+
             return true;
         }
         return false;

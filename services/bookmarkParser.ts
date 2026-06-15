@@ -1,8 +1,18 @@
 import { LinkItem, Category } from '../types';
 
-// Simple UUID generator fallback
+// 用 crypto.randomUUID 避免批量导入时同毫秒 id 碰撞；不可用时回退到时间戳+随机
 const generateId = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
   return Date.now().toString(36) + Math.random().toString(36).substring(2);
+};
+
+// 拒绝可执行/本地协议，防止导入的书签成为点击即触发的 XSS 载荷。
+const isUnsafeUrlScheme = (url: string) => {
+  const schemeMatch = url.match(/^\s*([a-z][a-z0-9+.\-]*):/i);
+  if (!schemeMatch) return false;
+  const scheme = schemeMatch[1].toLowerCase();
+  // 仅允许 http/https；javascript:/data:/file:/vbscript:/chrome:/about: 等一律拒绝
+  return scheme !== 'http' && scheme !== 'https';
 };
 
 export interface ImportResult {
@@ -55,9 +65,12 @@ export const parseBookmarks = async (file: File): Promise<ImportResult> => {
 
       if (tagName === 'DT') {
         // DT can contain an H3 (Folder) or A (Link)
-        const h3 = node.querySelector('h3');
-        const a = node.querySelector('a');
-        const dl = node.querySelector('dl');
+        // 只看 DT 的直接子元素，避免 querySelector 抓到嵌套子文件夹里的链接
+        const directChild = (tag: string) =>
+          Array.from(node.children).find(c => c.tagName.toUpperCase() === tag);
+        const h3 = directChild('H3');
+        const a = directChild('A');
+        const dl = directChild('DL');
 
         if (h3 && dl) {
             // It's a folder
@@ -68,7 +81,7 @@ export const parseBookmarks = async (file: File): Promise<ImportResult> => {
             const title = a.textContent || a.getAttribute('href') || 'No Title';
             const url = a.getAttribute('href');
             
-            if (url && !url.startsWith('chrome://') && !url.startsWith('about:')) {
+            if (url && !isUnsafeUrlScheme(url)) {
                 links.push({
                     id: generateId(),
                     title: title,
