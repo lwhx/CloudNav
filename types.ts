@@ -100,7 +100,7 @@ export interface WebDavConfig {
   enabled: boolean;
 }
 
-export type AIProvider = 'gemini' | 'openai';
+export type AIProvider = 'openai';
 
 export interface AIProviderConfig {
   id: string;

@@ -7,45 +7,44 @@ type LegacyAIConfig = Partial<AIProviderConfig> & {
   navigationName?: string;
 };
 
-const DEFAULT_GEMINI_PROVIDER_ID = 'gemini-default';
 const DEFAULT_OPENAI_PROVIDER_ID = 'openai-default';
 
 const createProviderId = () => `provider-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-export const getDefaultAIModel = (provider: AIProvider) => provider === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini';
+export const getDefaultAIModel = (_provider: AIProvider = 'openai') => 'gpt-4o-mini';
 
 export const getDefaultAIConfig = (apiKey = ''): AIConfig => ({
-  activeProviderId: DEFAULT_GEMINI_PROVIDER_ID,
+  activeProviderId: DEFAULT_OPENAI_PROVIDER_ID,
   providers: [
     {
-      id: DEFAULT_GEMINI_PROVIDER_ID,
-      name: 'Google Gemini',
-      provider: 'gemini',
+      id: DEFAULT_OPENAI_PROVIDER_ID,
+      name: 'OpenAI Compatible',
+      provider: 'openai',
       apiKey,
-      baseUrl: '',
-      model: getDefaultAIModel('gemini'),
-      description: 'Google Gemini 官方模型',
+      baseUrl: 'https://api.openai.com/v1',
+      model: getDefaultAIModel('openai'),
+      description: '兼容 OpenAI Chat Completions 的 API',
     },
   ],
 });
 
-export const createBlankAIProvider = (provider: AIProvider = 'openai'): AIProviderConfig => ({
+export const createBlankAIProvider = (_provider: AIProvider = 'openai'): AIProviderConfig => ({
   id: createProviderId(),
-  name: provider === 'gemini' ? 'Google Gemini' : 'OpenAI Compatible',
-  provider,
+  name: 'OpenAI Compatible',
+  provider: 'openai',
   apiKey: '',
-  baseUrl: provider === 'openai' ? 'https://api.openai.com/v1' : '',
-  model: getDefaultAIModel(provider),
-  description: provider === 'gemini' ? 'Google Gemini 官方模型' : '兼容 OpenAI Chat Completions 的 API',
+  baseUrl: 'https://api.openai.com/v1',
+  model: getDefaultAIModel('openai'),
+  description: '兼容 OpenAI Chat Completions 的 API',
 });
 
 const normalizeProvider = (value: unknown, fallbackIndex: number): AIProviderConfig | null => {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Partial<AIProviderConfig>;
-  const provider: AIProvider = raw.provider === 'gemini' ? 'gemini' : 'openai';
+  const provider: AIProvider = 'openai';
   const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : `provider-${fallbackIndex + 1}`;
   const name = typeof raw.name === 'string' && raw.name.trim()
     ? raw.name.trim()
-    : provider === 'gemini' ? 'Google Gemini' : 'OpenAI Compatible';
+    : 'OpenAI Compatible';
 
   return {
     id,
@@ -61,9 +60,9 @@ const normalizeProvider = (value: unknown, fallbackIndex: number): AIProviderCon
 };
 
 const migrateLegacyAIConfig = (legacy: LegacyAIConfig, fallbackApiKey = ''): AIConfig => {
-  const provider = legacy.provider === 'openai' ? 'openai' : 'gemini';
-  const id = provider === 'gemini' ? DEFAULT_GEMINI_PROVIDER_ID : DEFAULT_OPENAI_PROVIDER_ID;
-  const name = provider === 'gemini' ? 'Google Gemini' : 'OpenAI Compatible';
+  const provider: AIProvider = 'openai';
+  const id = DEFAULT_OPENAI_PROVIDER_ID;
+  const name = 'OpenAI Compatible';
 
   return {
     activeProviderId: id,
@@ -77,7 +76,7 @@ const migrateLegacyAIConfig = (legacy: LegacyAIConfig, fallbackApiKey = ''): AIC
         model: typeof legacy.model === 'string' && legacy.model.trim()
           ? legacy.model.trim()
           : getDefaultAIModel(provider),
-        description: provider === 'gemini' ? 'Google Gemini 官方模型' : '兼容 OpenAI Chat Completions 的 API',
+        description: '兼容 OpenAI Chat Completions 的 API',
       },
     ],
   };

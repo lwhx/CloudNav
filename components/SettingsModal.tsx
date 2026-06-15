@@ -1613,7 +1613,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                                 </span>
                                                 <span className="min-w-0 flex-1">
                                                     <span className="block truncate text-sm font-medium">{provider.name || '未命名提供商'}</span>
-                                                    <span className="block truncate text-xs text-slate-500">{provider.provider === 'gemini' ? 'Gemini' : 'OpenAI Compatible'}</span>
+                                                    <span className="block truncate text-xs text-slate-500">OpenAI Compatible</span>
                                                 </span>
                                                 <span
                                                     role="radio"
@@ -1684,7 +1684,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                                             onChange={(e) => handleProviderChange(selectedAIProvider.id, 'provider', e.target.value)}
                                             className="w-full rounded-lg border border-slate-300 p-2 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
                                         >
-                                            <option value="gemini">Google Gemini</option>
                                             <option value="openai">OpenAI Compatible</option>
                                         </select>
                                     </div>
@@ -1711,7 +1710,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                             />
                                         </div>
                                     </div>
-                                    {selectedAIProvider.provider === 'openai' && (
+                                    {(
                                         <div>
                                             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Base URL</label>
                                             <input
@@ -1729,7 +1728,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                             type="text"
                                             value={selectedAIProvider.model}
                                             onChange={(e) => handleProviderChange(selectedAIProvider.id, 'model', e.target.value)}
-                                            placeholder={selectedAIProvider.provider === 'gemini' ? 'gemini-2.5-flash' : 'gpt-4o-mini'}
+                                            placeholder="gpt-4o-mini"
                                             className="w-full rounded-lg border border-slate-300 p-2 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
                                         />
                                     </div>
