@@ -15,7 +15,7 @@ import {
   normalizeDomain,
   validateAuth,
 } from './storage-shared';
-import { fetchPageTitle } from './storage-metadata';
+import { fetchPageTitle, fetchPageMeta } from './storage-metadata';
 import { fetchAndEncodeFavicon, fetchAndEncodeImage, isSafeDataIcon } from './storage-favicon';
 
 export const onRequestOptions = async (context: { request: Request; env: Env }) => {
@@ -105,6 +105,31 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
         });
       } catch {
         return new Response(JSON.stringify({ title: '', success: false, reason: 'metadata_fetch_failed' }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+    }
+
+    if (getConfig === 'pageMeta') {
+      const targetUrl = url.searchParams.get('url');
+      if (!targetUrl) {
+        return new Response(JSON.stringify({ error: 'URL parameter is required' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+
+      if (await isRateLimited(env, request, 'metadata', METADATA_RATE_LIMIT_PER_WINDOW)) {
+        return buildRateLimitResponse(corsHeaders);
+      }
+
+      try {
+        const meta = await fetchPageMeta(env, targetUrl);
+        return new Response(JSON.stringify({ success: true, ...meta }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      } catch {
+        return new Response(JSON.stringify({ title: '', description: '', success: false, reason: 'metadata_fetch_failed' }), {
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
         });
       }

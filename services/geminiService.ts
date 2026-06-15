@@ -158,17 +158,23 @@ export const organizeLink = async (
     categories: { id: string; name: string }[],
     existingTags: string[],
     config: AIConfig,
+    pageMeta?: { title?: string; description?: string },
 ): Promise<AIOrganizeResult> => {
     const provider = getActiveAIProvider(config);
     if (!provider.apiKey) return {};
 
     const categoryList = categories.map(category => `${category.id}: ${category.name}`).join('\n');
     const tagPool = normalizeTags(existingTags).join('、') || '暂无';
+    // 页面正文线索：抓取到的 meta title/description 让模型对泛化标题（"首页"/"工具"）也能准确分类。
+    const pageTitle = pageMeta?.title?.trim() || title;
+    const pageDesc = pageMeta?.description?.trim();
     const prompt = `
 请整理这个书签，并只返回 JSON，不要返回 markdown。
 
 书签标题：${title}
 书签 URL：${url}
+页面标题：${pageTitle}
+页面描述：${pageDesc || '（未抓取到）'}
 现有描述：${currentDescription || '暂无'}
 可选分类：
 ${categoryList}

@@ -66,6 +66,25 @@ const extractPageTitle = (html: string) => {
   return titleMatch?.[1] ? normalizeTitle(titleMatch[1]) : '';
 };
 
+// 提取页面描述：优先 og:description / twitter:description，其次 meta name="description"。
+// 与 title 共用 normalizeTitle 的 strip+decode 防注入流程，但描述截断到 ~200 字符。
+const extractMetaDescription = (html: string) => {
+  const metaTags = html.match(/<meta\b[^>]*>/gi) || [];
+  const descriptionNames = new Set(['og:description', 'twitter:description']);
+
+  for (const tag of metaTags) {
+    const property = getTagAttribute(tag, 'property').toLowerCase();
+    const name = getTagAttribute(tag, 'name').toLowerCase();
+    const content = getTagAttribute(tag, 'content');
+
+    if (content && (descriptionNames.has(property) || descriptionNames.has(name) || name === 'description')) {
+      return normalizeTitle(content).slice(0, 200);
+    }
+  }
+
+  return '';
+};
+
 const readLimitedHtml = async (response: Response) => {
   const contentLength = Number(response.headers.get('content-length'));
   if (Number.isFinite(contentLength) && contentLength > MAX_HTML_BYTES) {
@@ -158,4 +177,37 @@ export const fetchPageTitle = async (env: Env, targetUrl: string) => {
   }
 
   return { title, cached: false };
+};
+
+// AI 深度整理用：抓取页面 title + description，给模型更多上下文，提升泛化标题的分类/描述质量。
+// 与 fetchPageTitle 共用抓取与解析逻辑，但缓存键独立，避免污染标题缓存。
+export const fetchPageMeta = async (env: Env, targetUrl: string) => {
+  const parsedUrl = normalizeMetadataUrl(targetUrl);
+  const metaCacheKey = `metadata:meta:${hashText(parsedUrl.toString())}`;
+  const cachedMeta = await env.CLOUDNAV_KV.get(metaCacheKey);
+
+  if (cachedMeta) {
+    try {
+      return { ...JSON.parse(cachedMeta), cached: true };
+    } catch {
+      // 缓存损坏则忽略，重新抓取。
+    }
+  }
+
+  const response = await fetchMetadataResponse(parsedUrl);
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch page with status ${response.status}`);
+  }
+
+  const html = await readLimitedHtml(response);
+  const title = extractPageTitle(html);
+  const description = extractMetaDescription(html);
+
+  const result = { title, description };
+  if (title || description) {
+    await env.CLOUDNAV_KV.put(metaCacheKey, JSON.stringify(result), { expirationTtl: METADATA_CACHE_TTL_SECONDS });
+  }
+
+  return { ...result, cached: false };
 };

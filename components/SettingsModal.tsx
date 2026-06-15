@@ -39,6 +39,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   }));
   
   const [isProcessing, setIsProcessing] = useState(false);
+  // 整理范围选择弹窗：null=关闭，'incremental'=增量，'full'=全量
+  const [organizeScopePrompt, setOrganizeScopePrompt] = useState<null | { incremental: number; full: number; options: typeof organizeOptions }>(null);
   const [isSuggestingCategories, setIsSuggestingCategories] = useState(false);
   const [categorySuggestions, setCategorySuggestions] = useState<AICategorySuggestion[]>([]);
   const [organizeOptions, setOrganizeOptions] = useState({ description: true, category: true, tags: true });
@@ -196,6 +198,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     onClose();
   };
 
+  // 判定链接是否"不完整"（缺描述/缺分类/缺标签），用于增量整理范围。
+  const isLinkIncomplete = (link: LinkItem) =>
+    !link.description?.trim() || !link.categoryId || (!link.tags || link.tags.length === 0);
+
+  // 判定标题是否"泛化"：这类标题仅凭自身难以分类，整理前抓取页面 meta 收益最大。
+  const isGenericTitle = (title: string) => {
+    const t = title.trim().toLowerCase();
+    if (t.length <= 4) return true;
+    const generic = ['首页', '主页', '导航', '常用', '工具', '收藏', '书签', 'home', 'index', 'welcome'];
+    return generic.some(g => t === g || t.includes(g));
+  };
+
   const handleBulkGenerate = async () => {
     if (!activeAIProvider.apiKey) {
         onNotify?.(`请先为 ${activeAIProvider.name} 配置并保存 API Key`, 'warning');
@@ -209,11 +223,27 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
     // 排除受密码保护分类的链接，避免内容外泄给第三方 LLM
     const lockedCatIds = new Set(categories.filter(c => c.password && !c.deletedAt).map(c => c.id));
-    const targetLinks = links.filter(link => !link.deletedAt && !lockedCatIds.has(link.categoryId) && (
-        (organizeOptions.description && !link.description)
-        || organizeOptions.category
-        || organizeOptions.tags
-    ));
+    const candidates = links.filter(link => !link.deletedAt && !lockedCatIds.has(link.categoryId));
+    const incrementalCount = candidates.filter(isLinkIncomplete).length;
+    const fullCount = candidates.length;
+
+    if (fullCount === 0) {
+        onNotify?.("没有需要整理的链接", 'info');
+        return;
+    }
+
+    // 弹出整理范围选择：增量（推荐）/全量/取消。
+    setOrganizeScopePrompt({ incremental: incrementalCount, full: fullCount, options: { ...organizeOptions } });
+  };
+
+  // 真正执行整理。scope: 'incremental' | 'full'
+  const runOrganize = async (scope: 'incremental' | 'full', options: { description: boolean; category: boolean; tags: boolean }) => {
+    setOrganizeScopePrompt(null);
+
+    const lockedCatIds = new Set(categories.filter(c => c.password && !c.deletedAt).map(c => c.id));
+    const targetLinks = links.filter(link =>
+      !link.deletedAt && !lockedCatIds.has(link.categoryId) && (scope === 'full' || isLinkIncomplete(link))
+    );
 
     if (targetLinks.length === 0) {
         onNotify?.("没有需要整理的链接", 'info');
@@ -221,11 +251,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     }
 
     const actionNames = [
-        organizeOptions.description ? '补描述' : '',
-        organizeOptions.category ? '推荐分类' : '',
-        organizeOptions.tags ? '推荐标签' : '',
+        options.description ? '补描述' : '',
+        options.category ? '推荐分类' : '',
+        options.tags ? '推荐标签' : '',
     ].filter(Boolean).join('、');
-    if (!confirm(`将使用 AI 为 ${targetLinks.length} 个链接执行${actionNames}，结果会在完成后写入，确定继续吗？`)) return;
 
     setIsProcessing(true);
     shouldStopRef.current = false;
@@ -233,6 +262,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
     const { organizeLink } = await import('../services/geminiService');
     let currentLinks = [...links];
+    // tagPool 在循环外算一次，避免并发/O(N²) 重复 flatMap。
+    const baseTagPool = normalizeTags(currentLinks.flatMap(item => item.tags || []));
     let failedCount = 0;
 
     for (let i = 0; i < targetLinks.length; i++) {
@@ -240,10 +271,34 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
         const link = targetLinks[i];
         try {
-            const tagPool = normalizeTags(currentLinks.flatMap(item => item.tags || []));
-            const result = await organizeLink(link.title, link.url, link.description, categories.filter(category => !category.deletedAt), tagPool, localConfig);
+            // 仅对泛化标题抓取页面 meta，减少 80% 额外请求；非泛化标题用现有信息即可。
+            let pageMeta: { title?: string; description?: string } | undefined;
+            if (isGenericTitle(link.title)) {
+                try {
+                    const metaRes = await fetch(`/api/storage?getConfig=pageMeta&url=${encodeURIComponent(link.url)}`);
+                    if (metaRes.ok) {
+                        const metaJson = await metaRes.json();
+                        if (metaJson.success && (metaJson.title || metaJson.description)) {
+                            pageMeta = { title: metaJson.title, description: metaJson.description };
+                        }
+                    }
+                } catch {
+                    // meta 抓取失败不阻塞整理，回退到 title/url。
+                }
+            }
 
-            if (!result.description && !result.categoryId && (!result.tags || result.tags.length === 0)) {
+            const result = await organizeLink(link.title, link.url, link.description, categories.filter(category => !category.deletedAt), baseTagPool, localConfig, pageMeta);
+
+            // 失败判定：针对用户勾选且本条需要的字段，是否返回了有效值（修正静默丢弃 #3）。
+            const wantedDesc = options.description && (scope === 'full' || !link.description);
+            const wantedCat = options.category;
+            const wantedTags = options.tags && (scope === 'full' || !link.tags || link.tags.length === 0);
+            const gotDesc = !!result.description;
+            const gotCat = !!result.categoryId;
+            const gotTags = !!(result.tags && result.tags.length);
+            const anyWanted = wantedDesc || wantedCat || wantedTags;
+            const anyGot = (wantedDesc && gotDesc) || (wantedCat && gotCat) || (wantedTags && gotTags);
+            if (anyWanted && !anyGot) {
                 failedCount += 1;
                 setProgress({ current: i + 1, total: targetLinks.length });
                 continue;
@@ -253,11 +308,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 if (item.id !== link.id) return item;
                 return {
                     ...item,
-                    description: organizeOptions.description && result.description ? result.description : item.description,
-                    categoryId: organizeOptions.category && result.categoryId && categories.some(category => !category.deletedAt && category.id === result.categoryId)
+                    description: options.description && result.description ? result.description : item.description,
+                    categoryId: options.category && result.categoryId && categories.some(category => !category.deletedAt && category.id === result.categoryId)
                         ? result.categoryId
                         : item.categoryId,
-                    tags: organizeOptions.tags && result.tags?.length
+                    tags: options.tags && result.tags?.length
                         ? normalizeTags([...(item.tags || []), ...result.tags])
                         : item.tags,
                 };
@@ -265,7 +320,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             setProgress({ current: i + 1, total: targetLinks.length });
         } catch (e) {
             failedCount += 1;
-            console.error(`Failed to organize ${link.title}`, e);
+            console.error(`Failed to organize ${link.title}`, e instanceof Error ? e.name : 'unknown');
             setProgress({ current: i + 1, total: targetLinks.length });
         }
     }
@@ -1839,6 +1894,56 @@ document.addEventListener('DOMContentLoaded', async () => {
             </div>
         </div>
       </div>
+
+      {/* AI 深度整理范围选择弹窗：增量（推荐）/ 全量 / 取消 */}
+      {organizeScopePrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setOrganizeScopePrompt(null)}>
+          <div
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-800"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="mb-1 text-lg font-semibold text-slate-800 dark:text-slate-100">AI 深度整理</h3>
+            <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">请选择整理范围：</p>
+            <div className="space-y-3">
+              <button
+                onClick={() => runOrganize('incremental', organizeScopePrompt.options)}
+                className="flex w-full items-start gap-3 rounded-xl border-2 border-purple-300 bg-purple-50 p-4 text-left transition-colors hover:border-purple-500 dark:border-purple-700 dark:bg-purple-900/20"
+              >
+                <div className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 border-purple-500 bg-purple-500">
+                  <span className="h-2 w-2 rounded-full bg-white" />
+                </div>
+                <div>
+                  <div className="font-medium text-slate-800 dark:text-slate-100">增量整理（推荐）</div>
+                  <div className="text-sm text-slate-500 dark:text-slate-400">
+                    仅整理缺少描述 / 缺少分类 / 缺少标签的链接，当前共 {organizeScopePrompt.incremental} 条待整理。
+                  </div>
+                </div>
+              </button>
+              <button
+                onClick={() => runOrganize('full', organizeScopePrompt.options)}
+                className="flex w-full items-start gap-3 rounded-xl border-2 border-slate-200 p-4 text-left transition-colors hover:border-slate-400 dark:border-slate-600 dark:bg-slate-700/40"
+              >
+                <div className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 border-slate-300 dark:border-slate-500" />
+                <div>
+                  <div className="font-medium text-slate-800 dark:text-slate-100">全量整理</div>
+                  <div className="text-sm text-slate-500 dark:text-slate-400">
+                    重新整理所有链接（含已有数据的），当前共 {organizeScopePrompt.full} 条。
+                  </div>
+                </div>
+              </button>
+            </div>
+            <div className="mt-5 flex justify-end">
+              <button
+                onClick={() => setOrganizeScopePrompt(null)}
+                className="rounded-lg px-4 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
