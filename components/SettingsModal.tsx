@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Bot, Key, Globe, Sparkles, PauseCircle, Wrench, Box, Copy, Check, LayoutTemplate, Info, Download, Sidebar, Keyboard, MousePointerClick, AlertTriangle, Package, Zap, Menu, Upload, Plus, Trash2 } from 'lucide-react';
 import { AIConfig, AIProvider, AIProviderConfig, LinkItem, Category, SiteSettings, AICategorySuggestion, AIOrganizeResult } from '../types';
 import { normalizeTags } from '../services/appDataPersistence';
+import OrganizePreviewModal, { buildOrganizeChanges, OrganizeChange } from './OrganizePreviewModal';
 import { createBlankAIProvider, getActiveAIProvider, getDefaultAIModel, normalizeAIConfig } from '../services/aiConfigService';
 import JSZip from 'jszip';
 import { NotifyHandler } from '../hooks/useToast';
@@ -41,6 +42,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   // 整理范围选择弹窗：null=关闭，'incremental'=增量，'full'=全量
   const [organizeScopePrompt, setOrganizeScopePrompt] = useState<null | { incremental: number; full: number; options: typeof organizeOptions }>(null);
+  // 整理结果预览：null=关闭，否则存放待应用的 patchMap + 对应 options，供预览弹窗展示与选择性应用。
+  const [pendingPreview, setPendingPreview] = useState<null | { patchMap: Map<string, AIOrganizeResult>; options: { description: boolean; category: boolean; tags: boolean }; failedCount: number }>(null);
   const [isSuggestingCategories, setIsSuggestingCategories] = useState(false);
   const [categorySuggestions, setCategorySuggestions] = useState<AICategorySuggestion[]>([]);
   const [organizeOptions, setOrganizeOptions] = useState({ description: true, category: true, tags: true });
@@ -324,11 +327,29 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targetLinks.length) }, () => processOne()));
 
-    // 一次性合并：按 patch 应用变更，避免并发竞态。
+    // 整理完成：暂存 patchMap 进预览弹窗，由用户确认后再应用（避免 AI 误覆盖手动数据）。
     const patchMap = new Map(patches.map(p => [p.linkId, p.result]));
+    const failedCount = failed.size;
+    setIsProcessing(false);
+    const stopMessage = shouldStopRef.current ? 'AI 批量整理已停止，已保存完成部分' : 'AI 批量整理完成';
+    if (patchMap.size === 0) {
+        onNotify?.(failedCount > 0 ? `${stopMessage}，失败 ${failedCount} 条` : '没有可应用的变更', 'warning');
+        return;
+    }
+    onNotify?.(failedCount > 0 ? `${stopMessage}，失败 ${failedCount} 条，请在预览中确认` : `${stopMessage}，请在预览中确认`, 'info');
+    setPendingPreview({ patchMap, options, failedCount });
+  };
+
+  // 预览弹窗：用户选中要应用的链接，按 patch 合并后落盘。
+  const applyOrganizePreview = (selectedLinkIds: string[]) => {
+    if (!pendingPreview) return;
+    const { patchMap, options } = pendingPreview;
+    const activeCategories = categories.filter(category => !category.deletedAt);
+    const selectedSet = new Set(selectedLinkIds);
+
     const currentLinks = links.map(item => {
         const result = patchMap.get(item.id);
-        if (!result) return item;
+        if (!result || !selectedSet.has(item.id)) return item;
         return {
             ...item,
             description: options.description && result.description ? result.description : item.description,
@@ -340,12 +361,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 : item.tags,
         };
     });
-
-    const failedCount = failed.size;
     onUpdateLinks(currentLinks);
-    setIsProcessing(false);
-    const stopMessage = shouldStopRef.current ? 'AI 批量整理已停止，已保存完成部分' : 'AI 批量整理完成';
-    onNotify?.(failedCount > 0 ? `${stopMessage}，失败 ${failedCount} 条` : stopMessage, shouldStopRef.current || failedCount > 0 ? 'warning' : 'success');
+    onNotify?.(`已应用 ${selectedLinkIds.length} 条整理结果`, 'success');
+    setPendingPreview(null);
   };
 
   const handleSuggestCategories = async () => {
@@ -1911,6 +1929,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             </div>
         </div>
       </div>
+
+      {/* 整理结果预览弹窗 */}
+      {pendingPreview && (() => {
+        const changes = buildOrganizeChanges(links, categories, pendingPreview.patchMap, pendingPreview.options);
+        return (
+          <OrganizePreviewModal
+            changes={changes}
+            onApply={applyOrganizePreview}
+            onCancel={() => { setPendingPreview(null); onNotify?.('已丢弃整理结果', 'info'); }}
+          />
+        );
+      })()}
 
       {/* AI 深度整理范围选择弹窗：增量（推荐）/ 全量 / 取消 */}
       {organizeScopePrompt && (
