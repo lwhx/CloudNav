@@ -62,7 +62,7 @@ export const getCorsHeaders = async (request: Request, env?: Env) => {
   return {
     'Access-Control-Allow-Origin': allowOrigin,
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': `Content-Type, Authorization, x-auth-password, ${AUTH_TIME_HEADER}`,
+    'Access-Control-Allow-Headers': `Content-Type, Authorization, x-auth-password, x-unlocked-categories, ${AUTH_TIME_HEADER}`,
     'Vary': 'Origin',
   };
 };

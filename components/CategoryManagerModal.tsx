@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, ArrowUp, ArrowDown, Trash2, Edit2, Plus, Check, Lock, Palette } from 'lucide-react';
 import { Category, CategoryGroup, DEFAULT_CATEGORY_GROUP_ID } from '../types';
+import { generateSalt, hashCategoryPassword } from '../services/categoryCrypto';
 import Icon from './Icon';
 import IconSelector from './IconSelector';
 import CategoryActionAuthModal from './CategoryActionAuthModal';
@@ -29,6 +30,7 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editPassword, setEditPassword] = useState('');
+  const [passwordTouched, setPasswordTouched] = useState(false);
   const [editIcon, setEditIcon] = useState('');
   const [editGroupId, setEditGroupId] = useState(DEFAULT_CATEGORY_GROUP_ID);
   const [newCatName, setNewCatName] = useState('');
@@ -109,19 +111,37 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   const startEdit = (cat: Category) => {
     setEditingId(cat.id);
     setEditName(cat.name);
-    setEditPassword(cat.password || '');
+    setEditPassword(''); // 不回显哈希；留空表示不改密码
+    setPasswordTouched(false);
     setEditIcon(cat.icon);
     setEditGroupId(cat.groupId || DEFAULT_CATEGORY_GROUP_ID);
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editingId || !editName.trim()) return;
-    const newCats = categories.map(c => c.id === editingId ? { 
-      ...c, 
+    const editing = categories.find(c => c.id === editingId);
+    // 仅当用户在本会话改过密码字段时才更新；否则沿用已存哈希与盐（留空 = 不改）。
+    let nextPassword: string | undefined;
+    let nextSalt: string | undefined;
+    if (passwordTouched) {
+      const trimmed = editPassword.trim();
+      if (trimmed) {
+        // 新明文：生成新盐并哈希，明文不入库。
+        nextSalt = generateSalt();
+        nextPassword = await hashCategoryPassword(trimmed, nextSalt);
+      }
+      // touched 且为空 -> 显式清除密码。
+    } else if (editing) {
+      nextPassword = editing.password;
+      nextSalt = editing.passwordSalt;
+    }
+    const newCats = categories.map(c => c.id === editingId ? {
+      ...c,
       name: editName.trim(),
       icon: editIcon,
       groupId: editGroupId,
-      password: editPassword.trim() || undefined,
+      password: nextPassword,
+      passwordSalt: nextSalt,
     } : c);
     onUpdateCategories(newCats, categoryGroups);
     setEditingId(null);
@@ -244,7 +264,7 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                           </select>
                           <div className="flex items-center gap-2">
                             <Lock size={14} className="text-slate-400" />
-                            <input type="password" value={editPassword} onChange={(e) => setEditPassword(e.target.value)} className="flex-1 p-1.5 px-2 text-sm rounded border border-blue-500 dark:bg-slate-800 dark:text-white outline-none" placeholder="密码（可选）" />
+                            <input type="password" value={editPassword} onChange={(e) => { setEditPassword(e.target.value); setPasswordTouched(true); }} className="flex-1 p-1.5 px-2 text-sm rounded border border-blue-500 dark:bg-slate-800 dark:text-white outline-none" placeholder="密码（可选，留空表示不修改）" />
                           </div>
                         </div>
                       ) : (

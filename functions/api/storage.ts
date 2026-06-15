@@ -176,6 +176,36 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
       });
     }
 
+    // 分类锁服务端化：受密码保护（含哈希+盐）的分类，其链接默认不返回，
+    // 除非客户端通过 x-unlocked-categories 头声明已解锁该分类。
+    // 无 passwordSalt 的遗留分类（明文密码）保持旧行为，避免破坏现有数据。
+    try {
+      const parsed = JSON.parse(data);
+      const unlockedHeader = request.headers.get('x-unlocked-categories') || '';
+      const unlockedIds = new Set(
+        unlockedHeader.split(',').map(s => s.trim()).filter(Boolean)
+      );
+      const lockedCategoryIds = new Set(
+        (parsed.categories || [])
+          .filter((cat: any) => cat && cat.password && cat.passwordSalt && !cat.deletedAt)
+          .map((cat: any) => cat.id)
+      );
+      if (lockedCategoryIds.size > 0) {
+        const filteredLinks = (parsed.links || []).filter((link: any) => {
+          if (!link || link.deletedAt) return true; // 软删除链接照常返回（合并逻辑需要）
+          if (lockedCategoryIds.has(link.categoryId) && !unlockedIds.has(link.categoryId)) {
+            return false;
+          }
+          return true;
+        });
+        return new Response(JSON.stringify({ ...parsed, links: filteredLinks }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+    } catch {
+      // 解析失败则返回原始 blob，保证可用性。
+    }
+
     return new Response(data, {
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });

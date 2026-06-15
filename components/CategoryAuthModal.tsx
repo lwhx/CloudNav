@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Lock, ArrowRight, Loader2, X } from 'lucide-react';
 import { Category } from '../types';
+import { verifyCategoryPassword } from '../services/categoryCrypto';
 
 interface CategoryAuthModalProps {
   isOpen: boolean;
@@ -15,15 +16,26 @@ const CategoryAuthModal: React.FC<CategoryAuthModalProps> = ({ isOpen, onClose, 
 
   if (!isOpen || !category) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [isVerifying, setIsVerifying] = useState(false);
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === category.password) {
+    if (!category) return;
+    setIsVerifying(true);
+    try {
+      // category.password 现在是 PBKDF2 哈希；用盐对输入重新派生后恒定时间比较。
+      const ok = await verifyCategoryPassword(password, category.password || '', category.passwordSalt || '');
+      if (ok) {
         onUnlock(category.id);
         setPassword('');
         setError('');
         onClose();
-    } else {
+      } else {
         setError('密码错误');
+      }
+    } catch {
+      setError('密码错误');
+    } finally {
+      setIsVerifying(false);
     }
   };
 

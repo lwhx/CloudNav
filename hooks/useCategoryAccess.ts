@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Category, LinkItem } from '../types';
+import { registerUnlockedCategory } from '../services/categoryUnlockRegistry';
 
 interface UseCategoryAccessOptions {
   categories: Category[];
@@ -48,6 +49,7 @@ export const useCategoryAccess = ({
 
   const handleUnlockCategory = useCallback((catId: string) => {
     setUnlockedCategoryIds(prev => new Set(prev).add(catId));
+    registerUnlockedCategory(catId); // 同步到注册表，供请求头使用
     setSelectedCategory(catId);
   }, [setSelectedCategory]);
 

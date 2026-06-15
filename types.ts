@@ -20,7 +20,8 @@ export interface Category {
   name: string;
   icon: string; // Lucide icon name or emoji
   groupId?: string;
-  password?: string; // Optional password for category protection
+  password?: string; // 分类密码的 PBKDF2 哈希（hex），明文不入库
+  passwordSalt?: string; // 哈希所用盐（hex）
   deletedAt?: number;
 }
 
