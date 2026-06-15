@@ -1,4 +1,3 @@
-import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import { AIConfig, AIOrganizeResult, AICategorySuggestion, AIProviderConfig, LinkItem } from "../types";
 import { normalizeTags } from "./appDataPersistence";
 import { getActiveAIProvider } from "./aiConfigService";
@@ -21,7 +20,9 @@ const parseOrganizeResult = (value: string): AIOrganizeResult => {
             categoryId: typeof parsed.categoryId === 'string' ? parsed.categoryId.trim() : undefined,
             tags: normalizeTags(parsed.tags),
         };
-    } catch {
+    } catch (e) {
+        console.warn('parseOrganizeResult failed:', e instanceof Error ? e.name : 'unknown',
+            'raw length:', value.length, 'raw head:', value.slice(0, 80));
         return {};
     }
 };
@@ -45,10 +46,15 @@ const parseCategorySuggestions = (value: string, validLinkIds: Set<string>): AIC
             }))
             .filter(item => item.name && item.linkIds.length > 0)
             .slice(0, 8);
-    } catch {
+    } catch (e) {
+        console.warn('parseCategorySuggestions failed:', e instanceof Error ? e.name : 'unknown',
+            'raw length:', value.length, 'raw head:', value.slice(0, 80));
         return [];
     }
 };
+
+// 默认模型：若 provider 未指定 model 则用此值，避免请求体缺 model 字段被网关拒绝。
+const DEFAULT_MODEL = 'gpt-4o-mini';
 
 const callOpenAICompatible = async (provider: AIProviderConfig, systemPrompt: string, userPrompt: string): Promise<string> => {
     try {
@@ -80,7 +86,7 @@ const callOpenAICompatible = async (provider: AIProviderConfig, systemPrompt: st
                 'Authorization': `Bearer ${provider.apiKey}`
             },
             body: JSON.stringify({
-                model: provider.model,
+                model: provider.model || DEFAULT_MODEL,
                 messages: [
                     { role: "system", content: systemPrompt },
                     { role: "user", content: userPrompt }
@@ -114,16 +120,6 @@ export const generateLinkDescription = async (title: string, url: string, config
   `;
 
   try {
-    if (provider.provider === 'gemini') {
-        const ai = new GoogleGenAI({ apiKey: provider.apiKey });
-        const modelName = provider.model || 'gemini-2.5-flash';
-        const response: GenerateContentResponse = await ai.models.generateContent({
-            model: modelName,
-            contents: `I have a website bookmark. ${prompt}`,
-        });
-        return response.text ? response.text.trim() : "无法生成描述";
-    }
-
     const result = await callOpenAICompatible(provider, "You are a helpful assistant that summarizes website bookmarks.", prompt);
     return result || "生成描述失败";
   } catch (error) {
@@ -147,16 +143,6 @@ export const suggestCategory = async (title: string, url: string, categories: {i
     `;
 
     try {
-        if (provider.provider === 'gemini') {
-            const ai = new GoogleGenAI({ apiKey: provider.apiKey });
-            const modelName = provider.model || 'gemini-2.5-flash';
-            const response: GenerateContentResponse = await ai.models.generateContent({
-                model: modelName,
-                contents: `Task: Categorize this website.\n${prompt}`,
-            });
-            return response.text ? response.text.trim() : null;
-        }
-
         const result = await callOpenAICompatible(provider, "You are an intelligent classification assistant. You only output the category ID.", prompt);
         return result || null;
     } catch (e) {
@@ -202,19 +188,7 @@ ${categoryList}
 `;
 
     try {
-        let raw = '';
-        if (provider.provider === 'gemini') {
-            const ai = new GoogleGenAI({ apiKey: provider.apiKey });
-            const modelName = provider.model || 'gemini-2.5-flash';
-            const response: GenerateContentResponse = await ai.models.generateContent({
-                model: modelName,
-                contents: prompt,
-            });
-            raw = response.text || '';
-        } else {
-            raw = await callOpenAICompatible(provider, 'You are a bookmark organization assistant. You only return valid JSON.', prompt);
-        }
-
+        const raw = await callOpenAICompatible(provider, 'You are a bookmark organization assistant. You only return valid JSON.', prompt);
         const result = parseOrganizeResult(raw);
         if (result.categoryId && !categories.some(category => category.id === result.categoryId)) {
             delete result.categoryId;
@@ -273,19 +247,7 @@ ${linkList}
 `;
 
     try {
-        let raw = '';
-        if (provider.provider === 'gemini') {
-            const ai = new GoogleGenAI({ apiKey: provider.apiKey });
-            const modelName = provider.model || 'gemini-2.5-flash';
-            const response: GenerateContentResponse = await ai.models.generateContent({
-                model: modelName,
-                contents: prompt,
-            });
-            raw = response.text || '';
-        } else {
-            raw = await callOpenAICompatible(provider, 'You are a bookmark taxonomy assistant. You only return valid JSON.', prompt);
-        }
-
+        const raw = await callOpenAICompatible(provider, 'You are a bookmark taxonomy assistant. You only return valid JSON.', prompt);
         const existingNames = new Set(categories.map(category => category.name.trim().toLowerCase()));
         return parseCategorySuggestions(raw, validLinkIds).filter(suggestion => !existingNames.has(suggestion.name.toLowerCase()));
     } catch (error) {
