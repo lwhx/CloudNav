@@ -153,7 +153,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-auth-password': authToken,
+            'Authorization': `Bearer ${authToken}`,
             ...(authIssuedAt ? { 'x-auth-issued-at': authIssuedAt } : {})
           },
           body: JSON.stringify({
@@ -330,7 +330,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'x-auth-password': authToken,
+              'Authorization': `Bearer ${authToken}`,
               ...(authIssuedAt ? { 'x-auth-issued-at': authIssuedAt } : {})
             },
             body: JSON.stringify({

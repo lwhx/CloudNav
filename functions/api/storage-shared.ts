@@ -62,7 +62,7 @@ export const getCorsHeaders = async (request: Request, env?: Env) => {
   return {
     'Access-Control-Allow-Origin': allowOrigin,
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': `Content-Type, x-auth-password, ${AUTH_TIME_HEADER}`,
+    'Access-Control-Allow-Headers': `Content-Type, Authorization, x-auth-password, ${AUTH_TIME_HEADER}`,
     'Vary': 'Origin',
   };
 };
@@ -77,6 +77,63 @@ export const getWebsiteConfig = async (env: Env): Promise<WebsiteConfig> => {
     return JSON.parse(websiteConfigStr);
   } catch {
     return { requirePasswordOnVisit: false, passwordExpiryDays: 7 };
+  }
+};
+
+// 恒定时间字符串比较，降低时序攻击面。
+const timingSafeEqualString = (a: string, b: string) => {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+};
+
+// 会话令牌：登录成功后签发，存入 KV（session:<token>），TTL 由 passwordExpiryDays 决定。
+// 0 表示永久，则按 90 天存储（避免无限期占用 KV，仍可通过重新登录刷新）。
+const SESSION_TOKEN_BYTES = 32;
+const SESSION_KV_PREFIX = 'session:';
+const SESSION_PERMANENT_TTL_SECONDS = 90 * 24 * 60 * 60;
+
+const toHex = (bytes: Uint8Array) => {
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, '0');
+  return out;
+};
+
+// 签发新会话令牌并写入 KV。返回 { token, createdAt }。
+export const createSession = async (env: Env, expiryDays: number) => {
+  const randomBytes = new Uint8Array(SESSION_TOKEN_BYTES);
+  crypto.getRandomValues(randomBytes);
+  const token = toHex(randomBytes);
+  const createdAt = Date.now();
+  const ttlSeconds = expiryDays > 0
+    ? expiryDays * 24 * 60 * 60
+    : SESSION_PERMANENT_TTL_SECONDS;
+  await env.CLOUDNAV_KV.put(
+    SESSION_KV_PREFIX + token,
+    JSON.stringify({ createdAt }),
+    { expirationTtl: ttlSeconds }
+  );
+  return { token, createdAt };
+};
+
+// 校验会话令牌是否存在且未过期。返回 { valid, createdAt }。
+export const validateSessionToken = async (env: Env, token: string, expiryDays: number) => {
+  if (!token) return { valid: false, createdAt: 0 };
+  const raw = await env.CLOUDNAV_KV.get(SESSION_KV_PREFIX + token);
+  if (!raw) return { valid: false, createdAt: 0 };
+  try {
+    const data = JSON.parse(raw);
+    const createdAt = Number(data.createdAt) || 0;
+    if (expiryDays > 0 && createdAt > 0) {
+      const expiryMs = expiryDays * 24 * 60 * 60 * 1000;
+      if (Date.now() - createdAt > expiryMs) return { valid: false, createdAt: 0 };
+    }
+    return { valid: true, createdAt };
+  } catch {
+    return { valid: false, createdAt: 0 };
   }
 };
 
@@ -103,17 +160,31 @@ export const validateAuth = async (
     };
   }
 
+  const websiteConfig = await getWebsiteConfig(env);
+  const passwordExpiryDays = websiteConfig.passwordExpiryDays ?? 7;
+
+  // 优先校验会话令牌（Authorization: Bearer <token>）。
+  const authHeader = request.headers.get('Authorization') || '';
+  const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (bearerMatch) {
+    const session = await validateSessionToken(env, bearerMatch[1].trim(), passwordExpiryDays);
+    if (!session.valid) {
+      return { ok: false, response: buildUnauthorizedResponse('会话已过期，请重新登录', corsHeaders) };
+    }
+    // 令牌已携带 createdAt，过期已在 validateSessionToken 内校验。
+    return { ok: true, websiteConfig };
+  }
+
+  // 回退：原始密码（x-auth-password）。兼容现有扩展与迁移中的旧客户端。恒定时间比较。
   const providedPassword = request.headers.get('x-auth-password');
-  if (!providedPassword || providedPassword !== serverPassword) {
+  if (!providedPassword || !timingSafeEqualString(providedPassword, serverPassword)) {
     return {
       ok: false,
       response: buildUnauthorizedResponse('Unauthorized', corsHeaders),
     };
   }
 
-  const websiteConfig = await getWebsiteConfig(env);
-  const passwordExpiryDays = websiteConfig.passwordExpiryDays ?? 7;
-
+  // 原始密码路径仍检查 requireSession 过期（令牌路径已在上面提前返回）。
   if (options.requireSession && passwordExpiryDays > 0) {
     const authIssuedAtRaw = request.headers.get(AUTH_TIME_HEADER);
     const authIssuedAt = authIssuedAtRaw ? Number(authIssuedAtRaw) : NaN;
@@ -123,7 +194,7 @@ export const validateAuth = async (
     if (!Number.isFinite(authIssuedAt) || authIssuedAt <= 0) {
       return {
         ok: false,
-        response: buildUnauthorizedResponse('会话已过期，请重新输入密码', corsHeaders),
+        response: buildUnauthorizedResponse('会话已过期，请重新登录', corsHeaders),
       };
     }
 

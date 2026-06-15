@@ -5,6 +5,7 @@ import {
   FAVICON_CACHE_TTL_SECONDS,
   FAVICON_FAILURE_CACHE_TTL_SECONDS,
   FAVICON_RATE_LIMIT_PER_WINDOW,
+  createSession,
   getCorsHeaders,
   getWebsiteConfig,
   METADATA_RATE_LIMIT_PER_WINDOW,
@@ -216,9 +217,10 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
         return authCheck.response;
       }
 
-      // 有效签发时间则回显（不续期），否则开启新 session
+      // 有效签发时间则回显（不续期），否则开启新 session。签发会话令牌一并返回。
       const authenticatedAt = (Number.isFinite(issuedAt) && issuedAt > 0) ? issuedAt : Date.now();
-      return new Response(JSON.stringify({ success: true, authenticatedAt }), {
+      const session = await createSession(env, expiryDays);
+      return new Response(JSON.stringify({ success: true, authenticatedAt, sessionToken: session.token }), {
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }

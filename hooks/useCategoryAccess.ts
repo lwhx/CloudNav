@@ -80,11 +80,13 @@ export const useCategoryAccess = ({
 
   const handleCategoryActionAuth = useCallback(async (password: string): Promise<boolean> => {
     try {
+      // 这里 password 是用户当场输入的原始主密码（重新鉴权），显式走 x-auth-password。
       const authResponse = await fetch('/api/storage', {
         method: 'POST',
-        headers: buildAuthHeaders(password, {
+        headers: {
           'Content-Type': 'application/json',
-        }),
+          'x-auth-password': password,
+        },
         body: JSON.stringify({ authOnly: true }),
       });
 

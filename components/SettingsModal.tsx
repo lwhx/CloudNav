@@ -174,7 +174,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'x-auth-password': authToken || '',
+                ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
                 ...(authIssuedAt ? { 'x-auth-issued-at': authIssuedAt } : {})
             },
             body: JSON.stringify({

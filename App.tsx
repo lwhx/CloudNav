@@ -314,8 +314,12 @@ function App() {
         
         if (authResponse.ok) {
             const authPayload = await authResponse.json();
-            setAuthToken(password);
-            localStorage.setItem(AUTH_KEY, password);
+            // 服务端签发会话令牌；客户端只存令牌，不再持久化原始主密码。
+            const sessionToken = authPayload.sessionToken || '';
+            if (sessionToken) {
+                setAuthToken(sessionToken);
+                localStorage.setItem(AUTH_KEY, sessionToken);
+            }
             setIsAuthOpen(false);
             setSyncStatus('saved');
             
@@ -370,7 +374,7 @@ function App() {
             // 登录成功后，从服务器获取数据
             try {
                 const res = await fetch('/api/storage', {
-                    headers: buildAuthHeaders(password)
+                    headers: buildAuthHeaders(sessionToken)
                 });
                 if (res.ok) {
                     const data = await res.json();
@@ -399,7 +403,7 @@ function App() {
             
             // 登录成功后，从KV空间加载AI配置
             await fetchProtectedConfigsAfterLogin({
-                password,
+                password: sessionToken,
                 buildAuthHeaders,
                 setAiConfig,
                 setWebDavConfig,

@@ -4,6 +4,7 @@ const AUTH_KEY = 'cloudnav_auth_token';
 const AUTH_TIME_KEY = 'lastLoginTime';
 
 export const useAuthSession = () => {
+  // authToken 现在存的是服务端签发的会话令牌，而非原始主密码。
   const [authToken, setAuthToken] = useState<string>('');
   const [requiresAuth, setRequiresAuth] = useState<boolean | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
@@ -13,8 +14,9 @@ export const useAuthSession = () => {
     const resolvedToken = token ?? authToken ?? localStorage.getItem(AUTH_KEY);
     const authIssuedAt = localStorage.getItem(AUTH_TIME_KEY);
 
-    if (resolvedToken) {
-      headers['x-auth-password'] = resolvedToken;
+    // 优先以会话令牌走 Bearer；原始密码回退路径由需要它的调用方自行设置 x-auth-password。
+    if (resolvedToken && !headers['Authorization'] && !headers['x-auth-password']) {
+      headers['Authorization'] = `Bearer ${resolvedToken}`;
     }
     if (authIssuedAt) {
       headers['x-auth-issued-at'] = authIssuedAt;

@@ -32,7 +32,7 @@ const callWebDavProxy = async (operation: 'check' | 'upload' | 'download', confi
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                ...(authToken ? { 'x-auth-password': authToken } : {}),
+                ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
                 ...(authIssuedAt ? { 'x-auth-issued-at': authIssuedAt } : {}),
             },
             body: JSON.stringify({
