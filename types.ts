@@ -64,6 +64,9 @@ export interface SiteSettings {
   cardStyle: 'detailed' | 'simple';
   requirePasswordOnVisit: boolean;
   passwordExpiryDays: number; // 密码过期天数，0表示永久不退出
+  /** 允许发起跨域请求的浏览器扩展 ID（对应 manifest 的扩展来源 chrome-extension://<id>/moz-extension://<id>）。
+   *  为空时拒绝所有扩展来源，仅允许同源。 */
+  allowedExtensionIds?: string[];
 }
 
 export interface AppState {

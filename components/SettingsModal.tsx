@@ -34,7 +34,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       favicon: siteSettings?.favicon || '',
       cardStyle: siteSettings?.cardStyle || 'detailed',
       requirePasswordOnVisit: siteSettings?.requirePasswordOnVisit ?? false,
-      passwordExpiryDays: siteSettings?.passwordExpiryDays ?? 7
+      passwordExpiryDays: siteSettings?.passwordExpiryDays ?? 7,
+      allowedExtensionIds: siteSettings?.allowedExtensionIds ?? []
   }));
   
   const [isProcessing, setIsProcessing] = useState(false);
@@ -67,7 +68,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           favicon: siteSettings?.favicon || '',
           cardStyle: siteSettings?.cardStyle || 'detailed',
           requirePasswordOnVisit: siteSettings?.requirePasswordOnVisit ?? false,
-          passwordExpiryDays: siteSettings?.passwordExpiryDays ?? 7
+          passwordExpiryDays: siteSettings?.passwordExpiryDays ?? 7,
+          allowedExtensionIds: siteSettings?.allowedExtensionIds ?? []
       };
       setLocalSiteSettings(safeSettings);
 
@@ -155,9 +157,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     setLocalSiteSettings(prev => {
         const next = { ...prev, [key]: value };
         
-        // 如果是身份验证过期天数修改，立即保存到 KV 空间
-        if (key === 'passwordExpiryDays' && authToken) {
-            saveWebsiteConfigToKV(next);
+        // 身份验证过期天数 / 扩展白名单修改，立即保存到 KV 空间
+        if ((key === 'passwordExpiryDays' || key === 'allowedExtensionIds') && authToken) {
+            saveWebsiteConfigToKV(next);
         }
         
         return next;
@@ -1408,6 +1410,23 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     />
                                 </div>
                                 <p className="text-xs text-slate-500 mt-1">设置为 0 表示永久不退出，默认 7 天后自动退出</p>
+                            </div>
+                            <div className="lg:col-span-2">
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">允许的浏览器扩展 ID</label>
+                                <input
+                                    type="text"
+                                    value={(localSiteSettings.allowedExtensionIds ?? []).join(', ')}
+                                    onChange={(e) => {
+                                        const ids = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+                                        handleSiteChange('allowedExtensionIds', ids);
+                                    }}
+                                    placeholder="如 abcdefghijklmnopqrstuvwxyzabcdef，多个用逗号分隔；留空表示拒绝所有扩展来源"
+                                    className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                                <p className="text-xs text-slate-500 mt-1">
+                                    出于安全考虑，浏览器扩展（chrome-extension:// / moz-extension://）默认无法跨域访问本站数据。
+                                    仅此处填入的扩展 ID 会被放行。在浏览器扩展管理页（chrome://extensions）可见已安装扩展的 ID。
+                                </p>
                             </div>
                         </div>
                     </div>

@@ -16,15 +16,15 @@ import {
 import { fetchPageTitle } from './storage-metadata';
 import { fetchAndEncodeFavicon, fetchAndEncodeImage, isSafeDataIcon } from './storage-favicon';
 
-export const onRequestOptions = async (context: { request: Request }) => {
+export const onRequestOptions = async (context: { request: Request; env: Env }) => {
   return new Response(null, {
     status: 204,
-    headers: getCorsHeaders(context.request),
+    headers: await getCorsHeaders(context.request, context.env),
   });
 };
 
 export const onRequestGet = async (context: { env: Env; request: Request }) => {
-  const corsHeaders = getCorsHeaders(context.request);
+  const corsHeaders = await getCorsHeaders(context.request, context.env);
 
   try {
     const { env, request } = context;
@@ -188,7 +188,7 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
 
 export const onRequestPost = async (context: { request: Request; env: Env }) => {
   const { request, env } = context;
-  const corsHeaders = getCorsHeaders(request);
+  const corsHeaders = await getCorsHeaders(request, env);
   const providedPassword = request.headers.get('x-auth-password');
   const serverPassword = env.PASSWORD;
 

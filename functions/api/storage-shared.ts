@@ -17,6 +17,7 @@ export interface WebsiteConfig {
   cardStyle?: 'detailed' | 'simple';
   requirePasswordOnVisit?: boolean;
   passwordExpiryDays?: number;
+  allowedExtensionIds?: string[];
 }
 
 export const AUTH_TIME_HEADER = 'x-auth-issued-at';
@@ -33,20 +34,37 @@ export const MAX_FAVICON_DATA_URI_LENGTH = Math.ceil(MAX_FAVICON_BYTES * 4 / 3) 
 export const MAX_METADATA_REDIRECTS = 3;
 export const MAX_FAVICON_REDIRECTS = 3;
 
-export const getCorsHeaders = (request: Request) => {
-  const requestUrl = new URL(request.url);
-  const origin = request.headers.get('Origin');
-  const allowOrigin = origin && (
-    origin === requestUrl.origin ||
-    origin.startsWith('chrome-extension://') ||
-    origin.startsWith('moz-extension://')
-  ) ? origin : requestUrl.origin;
-
-  return {
-    'Access-Control-Allow-Origin': allowOrigin,
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': `Content-Type, x-auth-password, ${AUTH_TIME_HEADER}`,
-  };
+export const isAllowedExtensionOrigin = (origin: string, allowedIds: string[] | undefined) => {
+  // origin 形如 chrome-extension://<id>/ 或 moz-extension://<id>/
+  const match = origin.match(/^(chrome-extension|moz-extension):\/\/([^\/]+)\//);
+  if (!match) return false;
+  const id = match[2];
+  return Array.isArray(allowedIds) && allowedIds.some(allowed => allowed.trim() === id);
+};
+
+// 计算允许的 Origin。同源直接放行；扩展来源仅在 website_config.allowedExtensionIds 命中时放行。
+export const resolveAllowOrigin = (request: Request, allowedExtensionIds?: string[]) => {
+  const requestUrl = new URL(request.url);
+  const origin = request.headers.get('Origin');
+  if (!origin) return requestUrl.origin;
+  if (origin === requestUrl.origin) return origin;
+  if ((origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://'))
+      && isAllowedExtensionOrigin(origin, allowedExtensionIds)) {
+    return origin;
+  }
+  return requestUrl.origin;
+};
+
+export const getCorsHeaders = async (request: Request, env?: Env) => {
+  const allowedExtensionIds = env ? (await getWebsiteConfig(env)).allowedExtensionIds : undefined;
+  const allowOrigin = resolveAllowOrigin(request, allowedExtensionIds);
+
+  return {
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': `Content-Type, x-auth-password, ${AUTH_TIME_HEADER}`,
+    'Vary': 'Origin',
+  };
 };
 
 export const getWebsiteConfig = async (env: Env): Promise<WebsiteConfig> => {

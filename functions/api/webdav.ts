@@ -107,15 +107,15 @@ const buildWebDavRequest = (operation: WebDavOperation, config: WebDavConfig, pa
   };
 };
 
-export const onRequestOptions = async (context: { request: Request }) =>
+export const onRequestOptions = async (context: { request: Request; env: Env }) =>
   new Response(null, {
     status: 204,
-    headers: getCorsHeaders(context.request),
+    headers: await getCorsHeaders(context.request, context.env),
   });
 
 export const onRequestPost = async (context: { request: Request; env: Env }) => {
   const { request, env } = context;
-  const corsHeaders = getCorsHeaders(request);
+  const corsHeaders = await getCorsHeaders(request, context.env);
 
   try {
     if (await isRateLimited(env, request, 'webdav', WEBDAV_RATE_LIMIT_PER_WINDOW)) {
