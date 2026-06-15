@@ -404,12 +404,30 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
 const extBackgroundJs = `// background.js - ${localSiteSettings.navTitle || 'CloudNav'} Assistant v7.6
+// 凭据不硬编码进源码：运行时从 chrome.storage.local 读取，首次使用时弹框输入。
 const CONFIG = {
   apiBase: "${domain}",
-  password: "${password}",
-  authTimestamp: "${localStorage.getItem('lastLoginTime') || ''}",
   siteName: "${(localSiteSettings.navTitle || 'CloudNav').replace(/"/g, '\\"')}"
 };
+const AUTH_KEY = 'cloudnav_auth';
+async function getAuth() {
+  const data = await chrome.storage.local.get(AUTH_KEY);
+  return data[AUTH_KEY] || null; // { password, authTimestamp }
+}
+async function setAuth(password, authTimestamp) {
+  await chrome.storage.local.set({ [AUTH_KEY]: { password, authTimestamp: authTimestamp || String(Date.now()) } });
+}
+async function clearAuth() {
+  await chrome.storage.local.remove(AUTH_KEY);
+}
+async function ensureAuth(reason) {
+  let auth = await getAuth();
+  if (auth && auth.password) return auth;
+  const password = prompt(reason || '请输入主密码以连接 CloudNav：');
+  if (!password) return null;
+  await setAuth(password);
+  return await getAuth();
+}
 const MODE_KEY = 'cloudnav_ui_mode';
 const POPUP_PATH = 'popup.html';
 
@@ -577,8 +595,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 });
 
 async function saveLink(title, url, categoryId, icon = '') {
-    if (!CONFIG.password) {
-        notify('保存失败', '未配置密码，请先在侧边栏登录。');
+    const auth = await ensureAuth('保存链接需要主密码，请输入：');
+    if (!auth) {
+        notify('保存失败', '未提供密码');
         return;
     }
 
@@ -595,8 +614,8 @@ async function saveLink(title, url, categoryId, icon = '') {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'x-auth-password': CONFIG.password,
-                ...(CONFIG.authTimestamp ? { 'x-auth-issued-at': CONFIG.authTimestamp } : {})
+                'x-auth-password': auth.password,
+                ...(auth.authTimestamp ? { 'x-auth-issued-at': auth.authTimestamp } : {})
             },
             body: JSON.stringify({
                 saveConfig: 'favicon',
@@ -614,10 +633,10 @@ async function saveLink(title, url, categoryId, icon = '') {
     try {
         const res = await fetch(\`\${CONFIG.apiBase}/api/link\`, {
             method: 'POST',
-            headers: { 
+            headers: {
                 'Content-Type': 'application/json',
-                'x-auth-password': CONFIG.password,
-                ...(CONFIG.authTimestamp ? { 'x-auth-issued-at': CONFIG.authTimestamp } : {})
+                'x-auth-password': auth.password,
+                ...(auth.authTimestamp ? { 'x-auth-issued-at': auth.authTimestamp } : {})
             },
             body: JSON.stringify({
                 title: title || '未命名',
@@ -734,9 +753,27 @@ function notify(title, message) {
 
 const extSidebarJs = `const CONFIG = {
   apiBase: "${domain}",
-  password: "${password}",
-  authTimestamp: "${localStorage.getItem('lastLoginTime') || ''}"
+  siteName: "${(localSiteSettings.navTitle || 'CloudNav').replace(/"/g, '\\"')}"
 };
+const AUTH_KEY = 'cloudnav_auth';
+async function getAuth() {
+  const data = await chrome.storage.local.get(AUTH_KEY);
+  return data[AUTH_KEY] || null; // { password, authTimestamp }
+}
+async function setAuth(password, authTimestamp) {
+  await chrome.storage.local.set({ [AUTH_KEY]: { password, authTimestamp: authTimestamp || String(Date.now()) } });
+}
+async function clearAuth() {
+  await chrome.storage.local.remove(AUTH_KEY);
+}
+async function ensureAuth(reason) {
+  let auth = await getAuth();
+  if (auth && auth.password) return auth;
+  const password = prompt(reason || '请输入主密码以连接 CloudNav：');
+  if (!password) return null;
+  await setAuth(password);
+  return await getAuth();
+}
 const CACHE_KEY = 'cloudnav_data';
 
 let port = null;
@@ -878,10 +915,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             refreshBtn.classList.add('rotating');
             container.innerHTML = '<div class="loading">同步数据中...</div>';
             
+            const auth = await ensureAuth('同步数据需要主密码，请输入：');
+            if (!auth) { container.innerHTML = '<div class="loading">未提供密码</div>'; return; }
             const res = await fetch(\`\${CONFIG.apiBase}/api/storage\`, {
                 headers: {
-                    'x-auth-password': CONFIG.password,
-                    ...(CONFIG.authTimestamp ? { 'x-auth-issued-at': CONFIG.authTimestamp } : {})
+                    'x-auth-password': auth.password,
+                    ...(auth.authTimestamp ? { 'x-auth-issued-at': auth.authTimestamp } : {})
                 }
             });
             
@@ -1009,9 +1048,27 @@ const extPopupHtml = `<!DOCTYPE html>
 
 const extPopupJs = `const CONFIG = {
   apiBase: "${domain}",
-  password: "${password}",
-  authTimestamp: "${localStorage.getItem('lastLoginTime') || ''}"
+  siteName: "${(localSiteSettings.navTitle || 'CloudNav').replace(/"/g, '\\"')}"
 };
+const AUTH_KEY = 'cloudnav_auth';
+async function getAuth() {
+  const data = await chrome.storage.local.get(AUTH_KEY);
+  return data[AUTH_KEY] || null; // { password, authTimestamp }
+}
+async function setAuth(password, authTimestamp) {
+  await chrome.storage.local.set({ [AUTH_KEY]: { password, authTimestamp: authTimestamp || String(Date.now()) } });
+}
+async function clearAuth() {
+  await chrome.storage.local.remove(AUTH_KEY);
+}
+async function ensureAuth(reason) {
+  let auth = await getAuth();
+  if (auth && auth.password) return auth;
+  const password = prompt(reason || '请输入主密码以连接 CloudNav：');
+  if (!password) return null;
+  await setAuth(password);
+  return await getAuth();
+}
 const CACHE_KEY = 'cloudnav_data';
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1128,10 +1185,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             refreshBtn.classList.add('rotating');
+            const auth = await ensureAuth('同步数据需要主密码，请输入：');
+            if (!auth) { container.innerHTML = '<div class="loading">未提供密码</div>'; return; }
             const res = await fetch(\`\${CONFIG.apiBase}/api/storage\`, {
                 headers: {
-                    'x-auth-password': CONFIG.password,
-                    ...(CONFIG.authTimestamp ? { 'x-auth-issued-at': CONFIG.authTimestamp } : {})
+                    'x-auth-password': auth.password,
+                    ...(auth.authTimestamp ? { 'x-auth-issued-at': auth.authTimestamp } : {})
                 }
             });
             if (!res.ok) throw new Error('同步失败');
