@@ -1,5 +1,5 @@
 import { WebDavConfig } from '../../types';
-import { buildRateLimitResponse, Env, getCorsHeaders, isRateLimited, validateAuth } from './storage-shared';
+import { assertSafeWebDavUrl, buildRateLimitResponse, Env, getCorsHeaders, isRateLimited, validateAuth } from './storage-shared';
 
 type WebDavOperation = 'check' | 'upload' | 'download';
 
@@ -133,10 +133,17 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
       return buildJsonResponse({ error: 'Invalid operation' }, 400, corsHeaders);
     }
 
-    if (!config || !config.url || !config.username || !config.password) {
-      return buildJsonResponse({ error: 'Missing configuration' }, 400, corsHeaders);
-    }
-
+    if (!config || !config.url || !config.username || !config.password) {
+      return buildJsonResponse({ error: 'Missing configuration' }, 400, corsHeaders);
+    }
+
+    // SSRF 防护：拒绝环回/链路本地/云元数据目标（保留内网与非标端口，避免误伤自建 WebDAV）
+    try {
+      assertSafeWebDavUrl(config.url);
+    } catch {
+      return buildJsonResponse({ success: false, error: 'WebDAV 目标地址不被允许' }, 400, corsHeaders);
+    }
+
     const webDavRequest = buildWebDavRequest(operation, config, payload, filename);
     const response = await fetch(webDavRequest.fetchUrl, {
       method: webDavRequest.method,

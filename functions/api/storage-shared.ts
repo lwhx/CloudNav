@@ -199,8 +199,45 @@ export const normalizeMetadataUrl = (targetUrl: string) => {
     throw new Error('Blocked target host');
   }
 
-  parsedUrl.hash = '';
-  return parsedUrl;
+  parsedUrl.hash = '';
+  return parsedUrl;
+};
+
+// 仅拦截 SSRF 最高危目标（云元数据/环回/链路本地），保留 RFC1918 内网与非标端口，
+// 以免误伤家庭/内网 WebDAV（如 Nextcloud）。WebDAV SSRF 用此保守策略。
+export const isHighRiskSsrfHostname = (hostname: string) => {
+  const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  // 云元数据端点
+  if (normalized === 'metadata.google.internal' || normalized === 'metadata.azure.com') return true;
+  // 环回地址 127.0.0.0/8、localhost
+  if (normalized === 'localhost') return true;
+  const v4Parts = normalized.split('.').map(Number);
+  if (v4Parts.length === 4 && v4Parts.every(p => Number.isInteger(p) && p >= 0 && p <= 255)) {
+    if (v4Parts[0] === 127) return true;              // 127.0.0.0/8 loopback
+    if (v4Parts[0] === 169 && v4Parts[1] === 254) return true;  // 169.254.0.0/16 link-local (含云元数据)
+    if (v4Parts[0] === 0 && v4Parts[1] === 0 && v4Parts[2] === 0 && v4Parts[3] === 0) return true; // 0.0.0.0
+    return false;
+  }
+  // IPv6 环回/链路本地/IPv4-mapped 内网
+  if (normalized.includes(':')) {
+    if (normalized === '::1' || normalized === '::') return true;
+    const v4Mapped = normalized.match(/(?:::ffff:|::ffff:0:|64:ff9b::|::)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+    if (v4Mapped && isHighRiskSsrfHostname(v4Mapped[1])) return true;
+    if (normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb')) return true;
+  }
+  return false;
+};
+
+// 校验 WebDAV 目标 URL：仅 http(s)，拒绝环回/链路本地/云元数据。
+// 抛出 Error 时调用方应返回 400/403。
+export const assertSafeWebDavUrl = (targetUrl: string) => {
+  const parsedUrl = new URL(targetUrl);
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    throw new Error('仅支持 http/https');
+  }
+  if (!parsedUrl.hostname || isHighRiskSsrfHostname(parsedUrl.hostname)) {
+    throw new Error('目标地址被拦截（环回/链路本地/云元数据）');
+  }
 };
 
 export const normalizeDomain = (rawDomain: string | null) => {
