@@ -67,7 +67,8 @@ const buildWebDavRequest = (operation: WebDavOperation, config: WebDavConfig, pa
   if (!baseUrl.endsWith('/')) baseUrl += '/';
 
   const finalFilename = filename || DEFAULT_BACKUP_FILENAME;
-  const fileUrl = baseUrl + encodeURIComponent(finalFilename).replace(/%2F/gi, '/');
+  // 不放回 '/'：含 '../' 的文件名会路径穿越到 WebDAV 根目录之外。
+  const fileUrl = baseUrl + encodeURIComponent(finalFilename);
   const authHeader = `Basic ${btoa(`${config.username}:${config.password}`)}`;
   const headers: Record<string, string> = {
     'Authorization': authHeader,
@@ -163,7 +164,8 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
       ...(success ? {} : { error: buildWebDavErrorMessage(response.status) }),
     }, 200, corsHeaders);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'WebDAV request failed';
-    return buildJsonResponse({ error: message }, 500, corsHeaders);
+    // 不回显 error.message：DNS/TLS 错误可能含 Worker 访问的内部主机名/IP。
+    console.log('WebDAV request error:', error);
+    return buildJsonResponse({ success: false, error: 'WebDAV 请求失败，请检查网络或配置' }, 500, corsHeaders);
   }
 };

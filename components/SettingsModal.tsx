@@ -205,7 +205,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         return;
     }
 
-    const targetLinks = links.filter(link => !link.deletedAt && (
+    // 排除受密码保护分类的链接，避免内容外泄给第三方 LLM
+    const lockedCatIds = new Set(categories.filter(c => c.password && !c.deletedAt).map(c => c.id));
+    const targetLinks = links.filter(link => !link.deletedAt && !lockedCatIds.has(link.categoryId) && (
         (organizeOptions.description && !link.description)
         || organizeOptions.category
         || organizeOptions.tags
@@ -277,7 +279,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         onNotify?.(`请先为 ${activeAIProvider.name} 配置并保存 API Key`, 'warning');
         return;
     }
-    const activeLinks = links.filter(link => !link.deletedAt);
+    // 排除受密码保护分类的链接，避免内容外泄给第三方 LLM
+    const lockedCatIds = new Set(categories.filter(c => c.password && !c.deletedAt).map(c => c.id));
+    const activeLinks = links.filter(link => !link.deletedAt && !lockedCatIds.has(link.categoryId));
     if (activeLinks.length < 2) {
         onNotify?.('链接数量不足，暂时无法生成分类建议', 'info');
         return;

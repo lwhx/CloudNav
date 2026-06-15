@@ -61,6 +61,8 @@ const TrashModal = ({ isOpen, onClose, links, categories, categoryGroups, onUpda
   };
 
   const permanentlyDeleteCategory = (categoryId: string) => {
+    // 'common' 是系统默认分类，永久删除后 restore 落到该分类的链接会变隐形，故禁止
+    if (categoryId === 'common') return;
     if (!confirm('确定永久删除这个分类吗？此操作不可恢复。')) return;
     onUpdateData(links, categories.filter(category => category.id !== categoryId), categoryGroups);
   };

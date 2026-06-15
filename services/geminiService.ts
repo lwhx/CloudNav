@@ -53,9 +53,24 @@ const parseCategorySuggestions = (value: string, validLinkIds: Set<string>): AIC
 const callOpenAICompatible = async (provider: AIProviderConfig, systemPrompt: string, userPrompt: string): Promise<string> => {
     try {
         let baseUrl = (provider.baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
+
+        // 协议校验：仅允许 https，或 http 但仅限本地 LLM。防止恶意配置外泄 API Key。
+        let parsedUrl: URL;
+        try {
+            parsedUrl = new URL(baseUrl);
+        } catch {
+            console.warn("OpenAI baseUrl 无效");
+            return "";
+        }
+        const isLocalHost = parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '127.0.0.1';
+        if (parsedUrl.protocol !== 'https:' && !(parsedUrl.protocol === 'http:' && isLocalHost)) {
+            console.warn("OpenAI baseUrl 协议被拒绝");
+            return "";
+        }
+
+        // 合并冗余分支：两路原本都追加相同后缀。
         if (!baseUrl.includes('/chat/completions')) {
-            if (baseUrl.endsWith('/v1')) baseUrl += '/chat/completions';
-            else baseUrl += '/chat/completions';
+            baseUrl += '/chat/completions';
         }
 
         const response = await fetch(baseUrl, {
@@ -75,15 +90,15 @@ const callOpenAICompatible = async (provider: AIProviderConfig, systemPrompt: st
         });
 
         if (!response.ok) {
-            const err = await response.text();
-            console.error("OpenAI API Error:", err);
+            // 仅记录状态码，不输出响应体（某些网关会回显 Authorization 头）。
+            console.error("OpenAI API Error status:", response.status);
             return "";
         }
 
         const data = await response.json();
         return data.choices?.[0]?.message?.content?.trim() || "";
     } catch (e) {
-        console.error("OpenAI Call Failed", e);
+        console.error("OpenAI Call Failed:", e instanceof Error ? e.name : 'unknown');
         return "";
     }
 };
@@ -112,7 +127,7 @@ export const generateLinkDescription = async (title: string, url: string, config
     const result = await callOpenAICompatible(provider, "You are a helpful assistant that summarizes website bookmarks.", prompt);
     return result || "生成描述失败";
   } catch (error) {
-    console.error("AI generation error:", error);
+    console.error("AI generation error:", error instanceof Error ? error.name : 'unknown');
     return "生成描述失败";
   }
 };
@@ -145,7 +160,7 @@ export const suggestCategory = async (title: string, url: string, categories: {i
         const result = await callOpenAICompatible(provider, "You are an intelligent classification assistant. You only output the category ID.", prompt);
         return result || null;
     } catch (e) {
-        console.error(e);
+        console.error("suggestCategory error:", e instanceof Error ? e.name : 'unknown');
         return null;
     }
 };
@@ -207,7 +222,7 @@ ${categoryList}
         result.tags = normalizeTags(result.tags);
         return result;
     } catch (error) {
-        console.error('AI organize error:', error);
+        console.error('AI organize error:', error instanceof Error ? error.name : 'unknown');
         return {};
     }
 };
@@ -274,7 +289,7 @@ ${linkList}
         const existingNames = new Set(categories.map(category => category.name.trim().toLowerCase()));
         return parseCategorySuggestions(raw, validLinkIds).filter(suggestion => !existingNames.has(suggestion.name.toLowerCase()));
     } catch (error) {
-        console.error('AI category suggestion error:', error);
+        console.error('AI category suggestion error:', error instanceof Error ? error.name : 'unknown');
         return [];
     }
 };

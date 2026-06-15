@@ -320,11 +320,16 @@ function App() {
             setSyncStatus('saved');
             
             // 登录成功后，获取网站配置（包括密码过期时间设置）
+            // 提到 try 外，使后续过期判断能用本次拉取的最新值（而非闭包里的旧 siteSettings）
+            let fetchedExpiryDays: number | undefined;
             try {
                 const websiteConfigRes = await fetch('/api/storage?getConfig=website');
                 if (websiteConfigRes.ok) {
                     const websiteConfigData = await websiteConfigRes.json();
                     if (websiteConfigData) {
+                        if (websiteConfigData.passwordExpiryDays !== undefined) {
+                            fetchedExpiryDays = websiteConfigData.passwordExpiryDays;
+                        }
                         setSiteSettings(prev => ({
                             ...prev,
                             title: websiteConfigData.title || prev.title,
@@ -339,16 +344,17 @@ function App() {
             } catch (e) {
                 console.warn("Failed to fetch website config after login.", e);
             }
-            
+
             // 检查密码是否过期
             const lastLoginTime = localStorage.getItem(AUTH_TIME_KEY);
             const currentTime = Date.now();
-            
+
             if (lastLoginTime) {
                 const lastLogin = parseInt(lastLoginTime);
                 const timeDiff = currentTime - lastLogin;
-                
-                const expiryDays = siteSettings.passwordExpiryDays ?? 7;
+
+                // 优先用本次刚拉取的配置，避免管理员在云端改了过期天数后仍按旧值判断
+                const expiryDays = fetchedExpiryDays ?? siteSettings.passwordExpiryDays ?? 7;
                 const expiryTimeMs = expiryDays > 0 ? expiryDays * 24 * 60 * 60 * 1000 : 0;
                 
                 if (expiryTimeMs > 0 && timeDiff > expiryTimeMs) {
@@ -420,25 +426,63 @@ function App() {
   };
 
   const handleImportConfirm = (newLinks: LinkItem[], newCategories: Category[], newCategoryGroups?: CategoryGroup[]) => {
-      // Merge categories: Avoid duplicate names/IDs
+      // Merge categories: 同名或同 id 视为重复；id 撞但 name 不同则重新生成 id 并 remap 链接，
+      // 避免该分类被静默丢弃、其链接变成指向错误分类的孤儿。
       const mergedCategories = [...categories];
-      
+      const existingNameSet = new Set(mergedCategories.map(c => c.name));
+      const existingIdSet = new Set(mergedCategories.map(c => c.id));
+      const categoryIdRemap = new Map<string, string>();
+      let importedLinks = [...newLinks];
+
       // 确保"常用推荐"分类始终存在
       if (!mergedCategories.some(c => c.id === 'common')) {
         mergedCategories.push({ id: 'common', name: '常用推荐', icon: 'Star' });
+        existingIdSet.add('common');
+        existingNameSet.add('常用推荐');
       }
-      
+
       newCategories.forEach(nc => {
-          if (nc.deletedAt || !mergedCategories.some(c => c.id === nc.id || c.name === nc.name)) {
+          // 软删除的分类直接保留（恢复场景）
+          if (nc.deletedAt) {
               mergedCategories.push(nc);
+              return;
           }
+          // 同名：保留现有分类，把导入链接 remap 到现有同名分类
+          if (existingNameSet.has(nc.name)) {
+              const existing = mergedCategories.find(c => c.name === nc.name);
+              if (existing && existing.id !== nc.id) {
+                  categoryIdRemap.set(nc.id, existing.id);
+              }
+              return;
+          }
+          // 同 id 但不同 name：保留为新分类，重新生成 id 避免覆盖
+          if (existingIdSet.has(nc.id)) {
+              const newId = crypto.randomUUID();
+              categoryIdRemap.set(nc.id, newId);
+              const remapped = { ...nc, id: newId };
+              mergedCategories.push(remapped);
+              existingIdSet.add(newId);
+              existingNameSet.add(nc.name);
+              return;
+          }
+          // 全新分类
+          mergedCategories.push(nc);
+          existingIdSet.add(nc.id);
+          existingNameSet.add(nc.name);
       });
 
-      const mergedLinks = [...links, ...newLinks];
+      if (categoryIdRemap.size > 0) {
+          importedLinks = importedLinks.map(link => {
+              const remapped = categoryIdRemap.get(link.categoryId);
+              return remapped ? { ...link, categoryId: remapped } : link;
+          });
+      }
+
+      const mergedLinks = [...links, ...importedLinks];
       const mergedGroups = newCategoryGroups?.length ? mergeCategoryGroups(categoryGroups, newCategoryGroups) : categoryGroups;
       updateData(mergedLinks, mergedCategories, mergedGroups);
       setIsImportModalOpen(false);
-      showToast(`成功导入 ${newLinks.length} 个新书签`, 'success');
+      showToast(`成功导入 ${importedLinks.length} 个新书签`, 'success');
   };
 
   const handleSaveAIConfig = async (config: AIConfig, newSiteSettings?: any) => {
@@ -1367,7 +1411,7 @@ function App() {
                                     ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6' 
                                     : 'grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8'
                                 }`}>
-                                    {pinnedLinks.map(link => React.createElement(SortableLinkCard, { key: link.id, link }))}
+                                    {pinnedLinks.map(link => React.createElement(SortableLinkCard, { key: link.id, link, siteSettings, isSortingMode, isSortingPinned }))}
                                 </div>
                             </SortableContext>
                         </DndContext>
@@ -1538,7 +1582,7 @@ function App() {
                                     ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6' 
                                     : 'grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8'
                                 }`}>
-                                    {displayedLinks.map(link => React.createElement(SortableLinkCard, { key: link.id, link }))}
+                                    {displayedLinks.map(link => React.createElement(SortableLinkCard, { key: link.id, link, siteSettings, isSortingMode, isSortingPinned }))}
                                 </div>
                             </SortableContext>
                         </DndContext>

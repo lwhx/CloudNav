@@ -226,9 +226,9 @@ export const normalizeDomain = (rawDomain: string | null) => {
 };
 
 export const getClientIdentifier = (request: Request) => {
-  return request.headers.get('cf-connecting-ip')
-    || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-    || 'anonymous';
+  // 仅信任 Cloudflare 边缘注入的 cf-connecting-ip；x-forwarded-for 客户端可伪造，
+  // 缺失 cf-connecting-ip 时归入单一桶，避免攻击者轮换 IP 绕过限流。
+  return request.headers.get('cf-connecting-ip') || 'unknown-peer';
 };
 
 export const isRateLimited = async (env: Env, request: Request, routeName: string, limit: number) => {
