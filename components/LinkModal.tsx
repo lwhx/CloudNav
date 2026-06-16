@@ -226,7 +226,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
   };
 
   const handleAIAssist = async () => {
-    if (!url || !title) return;
+    if (!url) return;
     const activeAIProvider = getActiveAIProvider(aiConfig);
     if (!activeAIProvider.apiKey) {
         onNotify?.(`请先在 AI 设置里为 ${activeAIProvider.name} 配置 API Key`, 'warning');
@@ -234,15 +234,32 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     }
 
     setIsGenerating(true);
-    
+
     // Parallel execution for speed
     try {
         const { organizeLink } = await import('../services/geminiService');
-        const result = await organizeLink(title, url, description, categories.filter(category => !category.deletedAt), tags, aiConfig);
+        // 标题为空时先抓页面 meta：既补标题，也给 AI 更多上下文，提升自动填写准确率。
+        let pageMeta: { title?: string; description?: string } | undefined;
+        if (!title.trim()) {
+            try {
+                const metaRes = await fetch(`/api/storage?getConfig=pageMeta&url=${encodeURIComponent(url)}`);
+                if (metaRes.ok) {
+                    const metaJson = await metaRes.json();
+                    if (metaJson.success && (metaJson.title || metaJson.description)) {
+                        pageMeta = { title: metaJson.title, description: metaJson.description };
+                        if (metaJson.title) setTitle(metaJson.title);
+                    }
+                }
+            } catch {
+                // meta 抓取失败不阻塞 AI 填写，回退到现有 title/url。
+            }
+        }
+        const effectiveTitle = title.trim() || pageMeta?.title || '';
+        const result = await organizeLink(effectiveTitle, url, description, categories.filter(category => !category.deletedAt), tags, aiConfig, pageMeta);
         if (result.description) setDescription(result.description);
         if (result.categoryId && categories.some(category => !category.deletedAt && category.id === result.categoryId)) setCategoryId(result.categoryId);
         if (result.tags?.length) setTags(prev => normalizeTags([...prev, ...result.tags!].slice(0, 8)));
-        
+
     } catch (e) {
         console.error("AI Assist failed:", e instanceof Error ? e.name : 'unknown');
     } finally {
@@ -496,7 +513,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
           <div>
             <div className="flex justify-between items-center mb-1">
                 <label className="block text-sm font-medium dark:text-slate-300">描述 (选填)</label>
-                {(title && url) && (
+                {url && (
                     <button
                         type="button"
                         onClick={handleAIAssist}
