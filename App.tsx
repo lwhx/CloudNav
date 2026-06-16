@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Search, Plus, Upload, Moon, Sun, Menu, 
   Trash2, Edit2, Loader2, Cloud, CheckCircle2, AlertCircle,
-  Pin, Settings, Lock, CloudCog, Github, GitFork, GripVertical, Save, CheckSquare, LogOut, ExternalLink, X, Info, ChevronDown, ChevronRight, Tag
+  Pin, Settings, Lock, CloudCog, Github, GitFork, GripVertical, Save, CheckSquare, LogOut, ExternalLink, X, Info, ChevronDown, ChevronRight, Tag, Bookmark
 } from 'lucide-react';
 import {
   DndContext,
@@ -1580,8 +1580,27 @@ function App() {
                                 <p>该目录已锁定</p>
                                 <button onClick={() => setCatAuthModalData(categories.find(c => c.id === selectedCategory) || null)} className="mt-4 px-4 py-2 bg-amber-500 text-white rounded-lg">输入密码解锁</button>
                             </>
+                        ) : searchQuery.trim() ? (
+                            <>
+                                <Search size={40} className="text-slate-300 dark:text-slate-600 mb-4" />
+                                <p className="text-slate-500 dark:text-slate-400">未找到匹配的链接</p>
+                                <p className="text-sm text-slate-400 mt-1">试试其他关键词，或清空搜索查看全部</p>
+                                <button onClick={() => setSearchInput('')} className="mt-4 px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg text-sm">清空搜索</button>
+                            </>
                         ) : (
-                            <></>
+                            <>
+                                <Bookmark size={40} className="text-slate-300 dark:text-slate-600 mb-4" />
+                                <p className="text-slate-500 dark:text-slate-400 font-medium">这里还没有链接</p>
+                                <p className="text-sm text-slate-400 mt-1 mb-5">开始构建你的专属导航吧</p>
+                                <div className="flex gap-3">
+                                    <button onClick={() => { setEditingLink(undefined); setIsModalOpen(true); }} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
+                                        <Plus size={16} /> 添加链接
+                                    </button>
+                                    <button onClick={() => setIsImportModalOpen(true)} className="flex items-center gap-1.5 px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg text-sm font-medium transition-colors">
+                                        <Upload size={16} /> 导入书签
+                                    </button>
+                                </div>
+                            </>
                         )}
                     </div>
                  ) : (

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { X, RotateCcw, Trash2 } from 'lucide-react';
 import { Category, CategoryGroup, DEFAULT_CATEGORY_GROUP_ID, LinkItem } from '../types';
 import { TRASH_RETENTION_MS } from '../services/appDataPersistence';
@@ -28,6 +29,7 @@ const TrashModal = ({ isOpen, onClose, links, categories, categoryGroups, onUpda
   const [activeTab, setActiveTab] = useState<'links' | 'categories'>('links');
 
   if (!isOpen) return null;
+  useEscapeKey(onClose, isOpen);
 
   const deletedLinks = links.filter(link => link.deletedAt).sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));
   const deletedCategories = categories.filter(category => category.deletedAt).sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));

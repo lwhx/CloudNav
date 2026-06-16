@@ -1,4 +1,5 @@
 import React from 'react';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { X, Download } from 'lucide-react';
 
 interface QRCodeModalProps {
@@ -15,6 +16,7 @@ const QRCodeModal: React.FC<QRCodeModalProps> = ({
   title
 }) => {
   if (!isOpen) return null;
+  useEscapeKey(onClose, isOpen);
 
   const generateQRCode = () => {
     // 使用第三方QR码生成服务

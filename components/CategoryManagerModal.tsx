@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { X, ArrowUp, ArrowDown, Trash2, Edit2, Plus, Check, Lock, Palette } from 'lucide-react';
 import { Category, CategoryGroup, DEFAULT_CATEGORY_GROUP_ID } from '../types';
 import { generateSalt, hashCategoryPassword } from '../services/categoryCrypto';
@@ -49,6 +50,7 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   } | null>(null);
 
   if (!isOpen) return null;
+  useEscapeKey(onClose, isOpen);
 
   const activeCategories = categories.filter(category => !category.deletedAt);
   const activeGroups = activeGroupsOf(categoryGroups);

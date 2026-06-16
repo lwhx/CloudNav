@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { X, Upload, FileText, ArrowRight, Check, AlertCircle, FolderInput, ListTree, Database } from 'lucide-react';
 import { Category, CategoryGroup, LinkItem, SearchConfig, AIConfig, WebDavConfig } from '../types';
 import { parseBookmarks } from '../services/bookmarkParser';
@@ -73,6 +74,7 @@ const ImportModal: React.FC<ImportModalProps> = ({
   };
 
   if (!isOpen) return null;
+  useEscapeKey(onClose, isOpen);
 
   const resetState = () => {
     setStep('upload');

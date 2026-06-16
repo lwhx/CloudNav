@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { X, Cloud, Download, Upload, CheckCircle2, AlertCircle, RefreshCw, Save } from 'lucide-react';
 import { Category, CategoryGroup, LinkItem, WebDavConfig, SearchConfig, AIConfig } from '../types';
 import { createAppDataEnvelope, getLocalDataBackups, deleteLocalDataBackup, clearLocalDataBackups, createManualLocalBackup } from '../services/appDataPersistence';
@@ -169,6 +170,7 @@ const BackupModal: React.FC<BackupModalProps> = ({
   };
 
   if (!isOpen) return null;
+  useEscapeKey(onClose, isOpen);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { X, Plus, Trash2, Edit2, Check, Globe, Search, ExternalLink, RotateCcw } from 'lucide-react';
 import { ExternalSearchSource, SearchMode } from '../types';
 
@@ -162,6 +163,7 @@ const SearchConfigModal: React.FC<SearchConfigModalProps> = ({
   };
 
   if (!isOpen) return null;
+  useEscapeKey(onClose, isOpen);
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">

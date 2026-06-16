@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { X, Sparkles, Loader2, Pin, Wand2, Trash2 } from 'lucide-react';
 import { LinkItem, Category, AIConfig } from '../types';
 import { normalizeTags } from '../services/appDataPersistence';
@@ -369,6 +370,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
   };
 
   if (!isOpen) return null;
+  useEscapeKey(onClose, isOpen);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">

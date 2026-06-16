@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { X, Save, Bot, Key, Globe, Sparkles, PauseCircle, Wrench, Box, Copy, Check, LayoutTemplate, Info, Download, Sidebar, Keyboard, MousePointerClick, AlertTriangle, Package, Zap, Menu, Upload, Plus, Trash2 } from 'lucide-react';
 import { AIConfig, AIProvider, AIProviderConfig, LinkItem, Category, SiteSettings, AICategorySuggestion, AIOrganizeResult } from '../types';
 import { normalizeTags } from '../services/appDataPersistence';
@@ -1429,6 +1430,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   };
 
   if (!isOpen) return null;
+  useEscapeKey(onClose, isOpen);
 
   const tabs = [
     { id: 'site', label: '网站设置', icon: LayoutTemplate },

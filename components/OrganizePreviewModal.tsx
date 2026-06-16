@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { Check, X, Eye, RotateCcw } from 'lucide-react';
 import { LinkItem, Category } from '../types';
 
@@ -27,6 +28,7 @@ const FieldChange = ({ label, before, after }: { label: string; before: string; 
 );
 
 const OrganizePreviewModal: React.FC<OrganizePreviewModalProps> = ({ changes, onApply, onCancel }) => {
+  useEscapeKey(onCancel, true);
   const [selected, setSelected] = useState<Set<string>>(new Set(changes.map(c => c.linkId)));
 
   const toggle = (linkId: string) => {
