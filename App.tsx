@@ -64,7 +64,10 @@ const mergeCategoryGroups = (currentGroups: CategoryGroup[], incomingGroups: Cat
   return Array.from(map.values()).sort((a, b) => (a.order || 0) - (b.order || 0));
 };
 
-const matchesLinkQuery = (link: LinkItem, rawQuery: string) => {
+import { buildPinyinIndex, PinyinIndex } from './services/pinyinIndex';
+import { useDebouncedValue } from './hooks/useDebouncedValue';
+
+const matchesLinkQuery = (link: LinkItem, rawQuery: string, pinyinMap?: Map<string, PinyinIndex>) => {
   const query = rawQuery.trim().toLowerCase();
   if (!query) return true;
   const tags = link.tags || [];
@@ -72,10 +75,17 @@ const matchesLinkQuery = (link: LinkItem, rawQuery: string) => {
     const tagQuery = query.slice(1);
     return tags.some(tag => tag.toLowerCase() === tagQuery || tag.toLowerCase().includes(tagQuery));
   }
-  return link.title.toLowerCase().includes(query)
+  const baseMatch = link.title.toLowerCase().includes(query)
     || link.url.toLowerCase().includes(query)
     || !!link.description?.toLowerCase().includes(query)
     || tags.some(tag => tag.toLowerCase().includes(query));
+  if (baseMatch) return true;
+  // 拼音匹配：让 "kaifa" 命中 "开发"。仅对标题做（URL/描述/标签多为英文，拼音收益小）。
+  const py = pinyinMap?.get(link.id);
+  if (py) {
+    return py.full.includes(query) || py.initial.includes(query);
+  }
+  return false;
 };
 
 const buildGroupedCategories = (groups: CategoryGroup[], categories: Category[]) => {
@@ -113,7 +123,8 @@ function App() {
 
   // --- State ---
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const searchQuery = useDebouncedValue(searchInput, 200);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   
   // WebDAV Config State
@@ -701,6 +712,9 @@ function App() {
       });
   }, [links, categories, unlockedCategoryIds]);
 
+  // 拼音索引：仅在 links 变化时重算，供搜索匹配使用。
+  const pinyinIndex = useMemo(() => buildPinyinIndex(links), [links]);
+
   const displayedLinks = useMemo(() => {
     let result = links.filter(link => !link.deletedAt);
     
@@ -710,7 +724,7 @@ function App() {
     // Search Filter
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(l => matchesLinkQuery(l, searchQuery));
+      result = result.filter(l => matchesLinkQuery(l, searchQuery, pinyinIndex));
     }
 
     // Category Filter
@@ -727,7 +741,7 @@ function App() {
       // 改为升序排序，这样order值小(旧卡片)的排在前面，order值大(新卡片)的排在后面
       return aOrder - bOrder;
     });
-  }, [links, selectedCategory, searchQuery, categories, unlockedCategoryIds]);
+  }, [links, selectedCategory, searchQuery, categories, unlockedCategoryIds, pinyinIndex]);
 
   // 计算其他目录的搜索结果
   const otherCategoryResults = useMemo<Record<string, LinkItem[]>>(() => {
@@ -751,7 +765,7 @@ function App() {
       }
       
       // 搜索匹配
-      return matchesLinkQuery(link, searchQuery);
+      return matchesLinkQuery(link, searchQuery, pinyinIndex);
     });
 
     // 按目录分组
@@ -1261,8 +1275,8 @@ function App() {
                         ? `在${selectedSearchSource.name}搜索内容` 
                         : "搜索站外内容..."
                   }
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && searchMode === 'external') {
                       handleExternalSearch();
@@ -1285,9 +1299,9 @@ function App() {
                   </button>
                 )}
                 
-                {searchQuery.trim() && (
+                {searchInput.trim() && (
                   <button
-                    onClick={() => setSearchQuery('')}
+                    onClick={() => setSearchInput('')}
                     className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full bg-slate-200 dark:bg-slate-600 text-slate-500 dark:text-slate-300 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-500 dark:hover:text-red-400 transition-all"
                     title="清空搜索"
                   >

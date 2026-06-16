@@ -27,6 +27,7 @@ export default defineConfig(({ mode }) => {
               if (!id.includes('node_modules')) return undefined;
               if (id.includes('lucide-react')) return 'vendor-icons';
               if (id.includes('@dnd-kit')) return 'vendor-dnd';
+              if (id.includes('pinyin-pro')) return 'vendor-pinyin';
               if (id.includes('jszip') || id.includes('qrcode')) return 'vendor-tools';
               if (id.includes('react') || id.includes('react-dom')) return 'vendor-react';
               return 'vendor';
