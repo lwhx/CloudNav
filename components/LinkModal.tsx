@@ -244,7 +244,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
         if (result.tags?.length) setTags(prev => normalizeTags([...prev, ...result.tags!].slice(0, 8)));
         
     } catch (e) {
-        console.error("AI Assist failed", e);
+        console.error("AI Assist failed:", e instanceof Error ? e.name : 'unknown');
     } finally {
         setIsGenerating(false);
     }
@@ -341,10 +341,10 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
           });
         }
       } catch (error) {
-        console.log("Failed to cache icon", error);
+        console.log("Failed to cache icon:", error instanceof Error ? error.name : 'unknown');
       }
     } catch (e) {
-      console.error("Failed to fetch icon", e);
+      console.error("Failed to fetch icon:", e instanceof Error ? e.name : 'unknown');
       onNotify?.("无法获取图标，请检查 URL 是否正确", 'error');
     } finally {
       setIsFetchingIcon(false);
