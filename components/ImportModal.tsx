@@ -71,10 +71,10 @@ const ImportModal: React.FC<ImportModalProps> = ({
       aiConfig: data.aiConfig,
       webDavConfig: data.webDavConfig
     };
-  };
+  };  useEscapeKey(onClose, isOpen);
+
 
   if (!isOpen) return null;
-  useEscapeKey(onClose, isOpen);
 
   const resetState = () => {
     setStep('upload');

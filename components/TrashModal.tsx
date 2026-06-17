@@ -26,10 +26,10 @@ const formatDeletedTime = (deletedAt?: number) => {
 const isExpired = (deletedAt?: number) => typeof deletedAt === 'number' && Date.now() - deletedAt > TRASH_RETENTION_MS;
 
 const TrashModal = ({ isOpen, onClose, links, categories, categoryGroups, onUpdateData }: TrashModalProps) => {
-  const [activeTab, setActiveTab] = useState<'links' | 'categories'>('links');
+  const [activeTab, setActiveTab] = useState<'links' | 'categories'>('links');  useEscapeKey(onClose, isOpen);
+
 
   if (!isOpen) return null;
-  useEscapeKey(onClose, isOpen);
 
   const deletedLinks = links.filter(link => link.deletedAt).sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));
   const deletedCategories = categories.filter(category => category.deletedAt).sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));

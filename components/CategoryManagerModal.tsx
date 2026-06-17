@@ -47,10 +47,10 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     type: 'edit' | 'delete';
     categoryId: string;
     categoryName: string;
-  } | null>(null);
+  } | null>(null);  useEscapeKey(onClose, isOpen);
+
 
   if (!isOpen) return null;
-  useEscapeKey(onClose, isOpen);
 
   const activeCategories = categories.filter(category => !category.deletedAt);
   const activeGroups = activeGroupsOf(categoryGroups);

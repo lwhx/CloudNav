@@ -367,10 +367,10 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     } finally {
       setIsFetchingIcon(false);
     }
-  };
+  };  useEscapeKey(onClose, isOpen);
+
 
   if (!isOpen) return null;
-  useEscapeKey(onClose, isOpen);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">

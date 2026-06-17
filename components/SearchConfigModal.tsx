@@ -160,10 +160,10 @@ const SearchConfigModal: React.FC<SearchConfigModalProps> = ({
     setIsEditing(null);
     setNewSource({ name: '', url: '', icon: 'Globe', enabled: true });
     onClose();
-  };
+  };  useEscapeKey(onClose, isOpen);
+
 
   if (!isOpen) return null;
-  useEscapeKey(onClose, isOpen);
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">

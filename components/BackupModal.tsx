@@ -167,10 +167,10 @@ const BackupModal: React.FC<BackupModalProps> = ({
   const handleClearLocalBackups = () => {
     if (!confirm('确定清空全部本地历史快照吗？')) return;
     setLocalBackups(clearLocalDataBackups());
-  };
+  };  useEscapeKey(onClose, isOpen);
+
 
   if (!isOpen) return null;
-  useEscapeKey(onClose, isOpen);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">

@@ -1427,10 +1427,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     } finally {
         setIsZipping(false);
     }
-  };
+  };  useEscapeKey(onClose, isOpen);
+
 
   if (!isOpen) return null;
-  useEscapeKey(onClose, isOpen);
 
   const tabs = [
     { id: 'site', label: '网站设置', icon: LayoutTemplate },

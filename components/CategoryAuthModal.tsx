@@ -13,10 +13,12 @@ interface CategoryAuthModalProps {
 const CategoryAuthModal: React.FC<CategoryAuthModalProps> = ({ isOpen, onClose, category, onUnlock }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  // 注意：所有 hook 必须在 early return 之前调用，否则 React 会因 hook 数量
+  // 不一致抛出 #310（点开弹窗瞬间白屏）。
+  const [isVerifying, setIsVerifying] = useState(false);
 
   if (!isOpen || !category) return null;
 
-  const [isVerifying, setIsVerifying] = useState(false);
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!category) return;
