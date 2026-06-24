@@ -46,6 +46,12 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
   const flushSyncQueueRef = useRef<() => Promise<void>>(async () => {});
   const scheduleRetryRef = useRef<(payload: PendingSyncPayload) => void>(() => {});
 
+  // 保持 linksRef 与 links state 同步（所有 setter 路径都覆盖）。
+  // loadLinkIcons 通过 linksRef 读取当前 state，避免覆盖加载期间发生的用户编辑。
+  useEffect(() => {
+    linksRef.current = links;
+  }, [links]);
+
   const applyData = useCallback((newLinks: LinkItem[], newCategories: Category[], newCategoryGroups?: CategoryGroup[]) => {
     const normalized = normalizeAppData({
       links: newLinks,
@@ -86,12 +92,7 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
       if (response.status === 401) {
         onAuthExpired();
         setSyncStatus('error');
-        // 保持 linksRef 与 links state 同步（所有 setter 路径都覆盖）。
-  useEffect(() => {
-    linksRef.current = links;
-  }, [links]);
-
-  return { ok: false, authExpired: true };
+        return { ok: false, authExpired: true };
       }
 
       if (!response.ok) {
