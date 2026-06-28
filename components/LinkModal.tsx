@@ -96,6 +96,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
       
       return () => clearTimeout(timer);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, autoFetchIcon, isEditing]);
 
   useEffect(() => {
@@ -111,11 +112,12 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     titleFetchControllerRef.current = null;
     titleFetchUrlRef.current = '';
     setIsFetchingTitle(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, title, isEditing]);
 
   const handleDelete = () => {
     if (!initialData?.id) return;
-    onDelete && onDelete(initialData.id);
+    if (onDelete) onDelete(initialData.id);
     onClose();
   };
 

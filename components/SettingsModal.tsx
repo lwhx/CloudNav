@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useEscapeKey } from '../hooks/useEscapeKey';
-import { X, Save, Bot, Key, Globe, Sparkles, PauseCircle, Wrench, Box, Copy, Check, LayoutTemplate, Info, Download, Sidebar, Keyboard, MousePointerClick, AlertTriangle, Package, Zap, Menu, Upload, Plus, Trash2 } from 'lucide-react';
+import { X, Save, Bot, Key, Globe, Sparkles, PauseCircle, Wrench, Copy, Check, LayoutTemplate, Download, Sidebar, Keyboard, Package, Zap, Upload, Plus, Trash2 } from 'lucide-react';
 import { AIConfig, AIProvider, AIProviderConfig, LinkItem, Category, SiteSettings, AICategorySuggestion, AIOrganizeResult } from '../types';
 import { normalizeTags } from '../services/appDataPersistence';
-import OrganizePreviewModal, { buildOrganizeChanges, OrganizeChange } from './OrganizePreviewModal';
+import OrganizePreviewModal, { buildOrganizeChanges } from './OrganizePreviewModal';
 import { createBlankAIProvider, getActiveAIProvider, getDefaultAIModel, normalizeAIConfig } from '../services/aiConfigService';
 import JSZip from 'jszip';
 import { NotifyHandler } from '../hooks/useToast';
@@ -24,7 +24,7 @@ interface SettingsModalProps {
 
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ 
-    isOpen, onClose, config, siteSettings, onSave, links, categories, onUpdateLinks, onApplyCategorySuggestions, authToken, onNotify 
+    isOpen, onClose, config, siteSettings, onSave, links, categories, onUpdateLinks, authToken, onNotify 
 }) => {
   const [activeTab, setActiveTab] = useState<'site' | 'ai' | 'tools'>('site');
   const [localConfig, setLocalConfig] = useState<AIConfig>(() => normalizeAIConfig(config));
@@ -45,13 +45,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const [organizeScopePrompt, setOrganizeScopePrompt] = useState<null | { incremental: number; full: number; options: typeof organizeOptions }>(null);
   // 整理结果预览：null=关闭，否则存放待应用的 patchMap + 对应 options，供预览弹窗展示与选择性应用。
   const [pendingPreview, setPendingPreview] = useState<null | { patchMap: Map<string, AIOrganizeResult>; options: { description: boolean; category: boolean; tags: boolean }; failedCount: number }>(null);
-  const [isSuggestingCategories, setIsSuggestingCategories] = useState(false);
-  const [categorySuggestions, setCategorySuggestions] = useState<AICategorySuggestion[]>([]);
   const [organizeOptions, setOrganizeOptions] = useState({ description: true, category: true, tags: true });
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const shouldStopRef = useRef(false);
 
-  const [password, setPassword] = useState('');
+  const [, setPassword] = useState('');
   const [domain, setDomain] = useState('');
   const [browserType, setBrowserType] = useState<'chrome' | 'firefox'>('chrome');
   const [isZipping, setIsZipping] = useState(false);
@@ -80,8 +78,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       setLocalSiteSettings(safeSettings);
 
       setIsProcessing(false);
-      setIsSuggestingCategories(false);
-      setCategorySuggestions([]);
       setIsZipping(false);
       setProgress({ current: 0, total: 0 });
       shouldStopRef.current = false;
@@ -159,13 +155,16 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
-  const handleSiteChange = async (key: keyof SiteSettings, value: any) => {
+  const handleSiteChange = async (key: keyof SiteSettings, value: SiteSettings[keyof SiteSettings]) => {
     setLocalSiteSettings(prev => {
         const next = { ...prev, [key]: value };
         
-        // 身份验证过期天数 / 扩展白名单修改，立即保存到 KV 空间
-        if ((key === 'passwordExpiryDays' || key === 'allowedExtensionIds') && authToken) {
-            saveWebsiteConfigToKV(next);
+        // 身份验证过期天数 / 扩展白名单修改，立即保存到 KV 空间
+
+        if ((key === 'passwordExpiryDays' || key === 'allowedExtensionIds') && authToken) {
+
+            saveWebsiteConfigToKV(next);
+
         }
         
         return next;
@@ -253,12 +252,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         onNotify?.("没有需要整理的链接", 'info');
         return;
     }
-
-    const actionNames = [
-        options.description ? '补描述' : '',
-        options.category ? '推荐分类' : '',
-        options.tags ? '推荐标签' : '',
-    ].filter(Boolean).join('、');
 
     setIsProcessing(true);
     shouldStopRef.current = false;
@@ -367,41 +360,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     setPendingPreview(null);
   };
 
-  const handleSuggestCategories = async () => {
-    if (!activeAIProvider.apiKey) {
-        onNotify?.(`请先为 ${activeAIProvider.name} 配置并保存 API Key`, 'warning');
-        return;
-    }
-    // 排除受密码保护分类的链接，避免内容外泄给第三方 LLM
-    const lockedCatIds = new Set(categories.filter(c => c.password && !c.deletedAt).map(c => c.id));
-    const activeLinks = links.filter(link => !link.deletedAt && !lockedCatIds.has(link.categoryId));
-    if (activeLinks.length < 2) {
-        onNotify?.('链接数量不足，暂时无法生成分类建议', 'info');
-        return;
-    }
-
-    setIsSuggestingCategories(true);
-    setCategorySuggestions([]);
-    try {
-        const { suggestCategoryStructure } = await import('../services/geminiService');
-        const suggestions = await suggestCategoryStructure(activeLinks, categories.filter(category => !category.deletedAt), localConfig);
-        setCategorySuggestions(suggestions);
-        onNotify?.(suggestions.length ? `已生成 ${suggestions.length} 个分类建议` : '暂无合适的新分类建议', suggestions.length ? 'success' : 'info');
-    } catch (error) {
-        console.error('AI category suggestion failed', error);
-        onNotify?.('AI 分类建议生成失败', 'error');
-    } finally {
-        setIsSuggestingCategories(false);
-    }
-  };
-
-  const handleApplySuggestions = () => {
-    if (!categorySuggestions.length) return;
-    if (!confirm(`确定创建 ${categorySuggestions.length} 个建议分类，并移动对应链接吗？`)) return;
-    onApplyCategorySuggestions?.(categorySuggestions);
-    setCategorySuggestions([]);
-  };
-
   const handleCopy = (text: string, key: string) => {
       navigator.clipboard.writeText(text);
       setCopiedStates(prev => ({ ...prev, [key]: true }));
@@ -444,7 +402,20 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const getManifestJson = () => {
     const navName = localSiteSettings.navTitle || "CloudNav";
-    const json: any = {
+    const json: {
+        manifest_version: number;
+        name: string;
+        version: string;
+        minimum_chrome_version: string;
+        description: string;
+        permissions: string[];
+        background: { service_worker: string };
+        action: { default_title: string; default_popup?: string };
+        side_panel: { default_path: string };
+        icons: Record<string, string>;
+        commands: Record<string, { suggested_key: { default: string; mac: string }; description: string }>;
+        browser_specific_settings?: { gecko: { id: string; strict_min_version: string } };
+    } = {
         manifest_version: 3,
         name: navName + " Pro",
         version: "7.6",
@@ -1446,7 +1417,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             {tabs.map(tab => (
                 <button
                     key={tab.id}
-                    onClick={() => setActiveTab(tab.id as any)}
+                    onClick={() => setActiveTab(tab.id as typeof activeTab)}
                     className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
                         activeTab === tab.id 
                         ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' 

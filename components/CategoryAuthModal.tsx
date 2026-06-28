@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lock, ArrowRight, Loader2, X } from 'lucide-react';
+import { Lock, ArrowRight, X } from 'lucide-react';
 import { Category } from '../types';
 import { verifyCategoryPassword } from '../services/categoryCrypto';
 
@@ -15,7 +15,7 @@ const CategoryAuthModal: React.FC<CategoryAuthModalProps> = ({ isOpen, onClose, 
   const [error, setError] = useState('');
   // 注意：所有 hook 必须在 early return 之前调用，否则 React 会因 hook 数量
   // 不一致抛出 #310（点开弹窗瞬间白屏）。
-  const [isVerifying, setIsVerifying] = useState(false);
+  const [, setIsVerifying] = useState(false);
 
   if (!isOpen || !category) return null;
 

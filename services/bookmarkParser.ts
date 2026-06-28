@@ -8,7 +8,7 @@ const generateId = () => {
 
 // 拒绝可执行/本地协议，防止导入的书签成为点击即触发的 XSS 载荷。
 const isUnsafeUrlScheme = (url: string) => {
-  const schemeMatch = url.match(/^\s*([a-z][a-z0-9+.\-]*):/i);
+  const schemeMatch = url.match(/^\s*([a-z][a-z0-9+.-]*):/i);
   if (!schemeMatch) return false;
   const scheme = schemeMatch[1].toLowerCase();
   // 仅允许 http/https；javascript:/data:/file:/vbscript:/chrome:/about: 等一律拒绝

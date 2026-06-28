@@ -24,7 +24,7 @@ type ProxyResult = {
 
 // Helper to call our Cloudflare Proxy
 // This solves the CORS issue by delegating the request to the backend
-const callWebDavProxy = async (operation: 'check' | 'upload' | 'download', config: WebDavConfig, payload?: any, filename?: string): Promise<ProxyResult> => {
+const callWebDavProxy = async (operation: 'check' | 'upload' | 'download', config: WebDavConfig, payload?: unknown, filename?: string): Promise<ProxyResult> => {
     try {
         const authToken = localStorage.getItem('cloudnav_auth_token');
         const authIssuedAt = localStorage.getItem('lastLoginTime');

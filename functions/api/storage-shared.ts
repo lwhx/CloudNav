@@ -1,5 +1,15 @@
+/// <reference lib="es2022" />
+/** Minimal KV interface — Cloudflare Workers KV subset used by this project. */
+interface KVNamespace {
+  get(key: string): Promise<string | null>;
+  get(key: string, options?: { type?: 'text' | 'json' }): Promise<string | null>;
+  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
+  delete(key: string): Promise<void>;
+  list(options?: { prefix?: string; limit?: number; cursor?: string }): Promise<{ keys: { name: string }[]; list_complete: boolean; cursor?: string }>;
+}
+
 export interface Env {
-  CLOUDNAV_KV: any;
+  CLOUDNAV_KV: KVNamespace;
   PASSWORD: string;
 }
 
@@ -36,35 +46,60 @@ export const MAX_FAVICON_REDIRECTS = 3;
 
 export const isAllowedExtensionOrigin = (origin: string, allowedIds: string[] | undefined) => {
   // origin 形如 chrome-extension://<id>/ 或 moz-extension://<id>/
-  const match = origin.match(/^(chrome-extension|moz-extension):\/\/([^\/]+)\//);
+  const match = origin.match(/^(chrome-extension|moz-extension):\/\/([^/]+)\//);
   if (!match) return false;
   const id = match[2];
   return Array.isArray(allowedIds) && allowedIds.some(allowed => allowed.trim() === id);
-};
-
-// 计算允许的 Origin。同源直接放行；扩展来源仅在 website_config.allowedExtensionIds 命中时放行。
-export const resolveAllowOrigin = (request: Request, allowedExtensionIds?: string[]) => {
-  const requestUrl = new URL(request.url);
-  const origin = request.headers.get('Origin');
-  if (!origin) return requestUrl.origin;
-  if (origin === requestUrl.origin) return origin;
-  if ((origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://'))
-      && isAllowedExtensionOrigin(origin, allowedExtensionIds)) {
-    return origin;
-  }
-  return requestUrl.origin;
-};
-
-export const getCorsHeaders = async (request: Request, env?: Env) => {
-  const allowedExtensionIds = env ? (await getWebsiteConfig(env)).allowedExtensionIds : undefined;
-  const allowOrigin = resolveAllowOrigin(request, allowedExtensionIds);
-
-  return {
-    'Access-Control-Allow-Origin': allowOrigin,
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': `Content-Type, Authorization, x-auth-password, x-unlocked-categories, ${AUTH_TIME_HEADER}`,
-    'Vary': 'Origin',
-  };
+};
+
+
+
+// 计算允许的 Origin。同源直接放行；扩展来源仅在 website_config.allowedExtensionIds 命中时放行。
+
+export const resolveAllowOrigin = (request: Request, allowedExtensionIds?: string[]) => {
+
+  const requestUrl = new URL(request.url);
+
+  const origin = request.headers.get('Origin');
+
+  if (!origin) return requestUrl.origin;
+
+  if (origin === requestUrl.origin) return origin;
+
+  if ((origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://'))
+
+      && isAllowedExtensionOrigin(origin, allowedExtensionIds)) {
+
+    return origin;
+
+  }
+
+  return requestUrl.origin;
+
+};
+
+
+
+export const getCorsHeaders = async (request: Request, env?: Env) => {
+
+  const allowedExtensionIds = env ? (await getWebsiteConfig(env)).allowedExtensionIds : undefined;
+
+  const allowOrigin = resolveAllowOrigin(request, allowedExtensionIds);
+
+
+
+  return {
+
+    'Access-Control-Allow-Origin': allowOrigin,
+
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+
+    'Access-Control-Allow-Headers': `Content-Type, Authorization, x-auth-password, x-unlocked-categories, ${AUTH_TIME_HEADER}`,
+
+    'Vary': 'Origin',
+
+  };
+
 };
 
 export const getWebsiteConfig = async (env: Env): Promise<WebsiteConfig> => {
@@ -288,45 +323,84 @@ export const normalizeMetadataUrl = (targetUrl: string) => {
     throw new Error('Blocked target host');
   }
 
-  parsedUrl.hash = '';
-  return parsedUrl;
-};
-
-// 仅拦截 SSRF 最高危目标（云元数据/环回/链路本地），保留 RFC1918 内网与非标端口，
-// 以免误伤家庭/内网 WebDAV（如 Nextcloud）。WebDAV SSRF 用此保守策略。
-export const isHighRiskSsrfHostname = (hostname: string) => {
-  const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  // 云元数据端点
-  if (normalized === 'metadata.google.internal' || normalized === 'metadata.azure.com') return true;
-  // 环回地址 127.0.0.0/8、localhost
-  if (normalized === 'localhost') return true;
-  const v4Parts = normalized.split('.').map(Number);
-  if (v4Parts.length === 4 && v4Parts.every(p => Number.isInteger(p) && p >= 0 && p <= 255)) {
-    if (v4Parts[0] === 127) return true;              // 127.0.0.0/8 loopback
-    if (v4Parts[0] === 169 && v4Parts[1] === 254) return true;  // 169.254.0.0/16 link-local (含云元数据)
-    if (v4Parts[0] === 0 && v4Parts[1] === 0 && v4Parts[2] === 0 && v4Parts[3] === 0) return true; // 0.0.0.0
-    return false;
-  }
-  // IPv6 环回/链路本地/IPv4-mapped 内网
-  if (normalized.includes(':')) {
-    if (normalized === '::1' || normalized === '::') return true;
-    const v4Mapped = normalized.match(/(?:::ffff:|::ffff:0:|64:ff9b::|::)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-    if (v4Mapped && isHighRiskSsrfHostname(v4Mapped[1])) return true;
-    if (normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb')) return true;
-  }
-  return false;
-};
-
-// 校验 WebDAV 目标 URL：仅 http(s)，拒绝环回/链路本地/云元数据。
-// 抛出 Error 时调用方应返回 400/403。
-export const assertSafeWebDavUrl = (targetUrl: string) => {
-  const parsedUrl = new URL(targetUrl);
-  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-    throw new Error('仅支持 http/https');
-  }
-  if (!parsedUrl.hostname || isHighRiskSsrfHostname(parsedUrl.hostname)) {
-    throw new Error('目标地址被拦截（环回/链路本地/云元数据）');
-  }
+  parsedUrl.hash = '';
+
+  return parsedUrl;
+
+};
+
+
+
+// 仅拦截 SSRF 最高危目标（云元数据/环回/链路本地），保留 RFC1918 内网与非标端口，
+
+// 以免误伤家庭/内网 WebDAV（如 Nextcloud）。WebDAV SSRF 用此保守策略。
+
+export const isHighRiskSsrfHostname = (hostname: string) => {
+
+  const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+
+  // 云元数据端点
+
+  if (normalized === 'metadata.google.internal' || normalized === 'metadata.azure.com') return true;
+
+  // 环回地址 127.0.0.0/8、localhost
+
+  if (normalized === 'localhost') return true;
+
+  const v4Parts = normalized.split('.').map(Number);
+
+  if (v4Parts.length === 4 && v4Parts.every(p => Number.isInteger(p) && p >= 0 && p <= 255)) {
+
+    if (v4Parts[0] === 127) return true;              // 127.0.0.0/8 loopback
+
+    if (v4Parts[0] === 169 && v4Parts[1] === 254) return true;  // 169.254.0.0/16 link-local (含云元数据)
+
+    if (v4Parts[0] === 0 && v4Parts[1] === 0 && v4Parts[2] === 0 && v4Parts[3] === 0) return true; // 0.0.0.0
+
+    return false;
+
+  }
+
+  // IPv6 环回/链路本地/IPv4-mapped 内网
+
+  if (normalized.includes(':')) {
+
+    if (normalized === '::1' || normalized === '::') return true;
+
+    const v4Mapped = normalized.match(/(?:::ffff:|::ffff:0:|64:ff9b::|::)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+
+    if (v4Mapped && isHighRiskSsrfHostname(v4Mapped[1])) return true;
+
+    if (normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb')) return true;
+
+  }
+
+  return false;
+
+};
+
+
+
+// 校验 WebDAV 目标 URL：仅 http(s)，拒绝环回/链路本地/云元数据。
+
+// 抛出 Error 时调用方应返回 400/403。
+
+export const assertSafeWebDavUrl = (targetUrl: string) => {
+
+  const parsedUrl = new URL(targetUrl);
+
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+
+    throw new Error('仅支持 http/https');
+
+  }
+
+  if (!parsedUrl.hostname || isHighRiskSsrfHostname(parsedUrl.hostname)) {
+
+    throw new Error('目标地址被拦截（环回/链路本地/云元数据）');
+
+  }
+
 };
 
 export const normalizeDomain = (rawDomain: string | null) => {

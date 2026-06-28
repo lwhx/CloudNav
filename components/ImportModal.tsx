@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useEscapeKey } from '../hooks/useEscapeKey';
-import { X, Upload, FileText, ArrowRight, Check, AlertCircle, FolderInput, ListTree, Database } from 'lucide-react';
+import { X, Upload, FileText, Check, AlertCircle, FolderInput, ListTree, Database } from 'lucide-react';
 import { Category, CategoryGroup, LinkItem, SearchConfig, AIConfig, WebDavConfig } from '../types';
 import { parseBookmarks } from '../services/bookmarkParser';
 import { NotifyHandler } from '../hooks/useToast';
@@ -30,7 +30,7 @@ const ImportModal: React.FC<ImportModalProps> = ({
   onNotify
 }) => {
   const [step, setStep] = useState<'upload' | 'preview'>('upload');
-  const [file, setFile] = useState<File | null>(null);
+  const [, setFile] = useState<File | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   
   // Analysis Results

@@ -49,7 +49,7 @@ const createRoundedFavicon = (source: string): Promise<string> => {
         ctx.clip();
         ctx.drawImage(img, 0, 0, size, size);
         resolve(canvas.toDataURL('image/png'));
-      } catch (e) {
+      } catch {
         resolve(source);
       }
     };
@@ -64,7 +64,7 @@ export const useSiteSettings = () => {
     if (saved) {
       try {
         return JSON.parse(saved);
-      } catch (e) {}
+      } catch { /* ignore corrupted settings */ }
     }
     return DEFAULT_SITE_SETTINGS;
   });

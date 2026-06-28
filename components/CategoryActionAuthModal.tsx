@@ -42,7 +42,7 @@ const CategoryActionAuthModal: React.FC<CategoryActionAuthModalProps> = ({
       } else {
         setError('密码错误，请重试');
       }
-    } catch (err) {
+    } catch {
       setError('验证失败，请重试');
     } finally {
       setIsVerifying(false);

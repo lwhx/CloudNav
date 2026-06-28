@@ -93,7 +93,7 @@ export const useAppBootstrap = ({
     if (savedWebDav) {
       try {
         setWebDavConfig(JSON.parse(savedWebDav));
-      } catch {}
+      } catch { /* ignore corrupted config */ }
     }
 
     const urlParams = new URLSearchParams(window.location.search);
@@ -271,6 +271,7 @@ export const useAppBootstrap = ({
     };
 
     initData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 };
 

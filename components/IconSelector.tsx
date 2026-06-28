@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Search, ExternalLink } from 'lucide-react';
+import { Search, ExternalLink } from 'lucide-react';
 import Icon, { getSupportedIconName, hasSupportedIcon } from './Icon';
 
 interface IconSelectorProps {
@@ -35,23 +35,10 @@ const IconSelector: React.FC<IconSelectorProps> = ({
   const [customIconName, setCustomIconName] = useState('');
   const [isValidIcon, setIsValidIcon] = useState(true);
 
-  // 获取当前目标图标
-  const getCurrentIcon = () => {
-    return selectedIcon;
-  };
-
   // 过滤图标
   const filteredIcons = commonIcons.filter(icon => 
     icon.toLowerCase().includes(searchQuery.toLowerCase())
   );
-
-  // 将 kebab-case 转换为 PascalCase
-  const kebabToPascal = (kebabName: string): string => {
-    return kebabName
-      .split('-')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join('');
-  };
 
   // 验证图标名称是否有效
   const validateIconName = (iconName: string): boolean => {

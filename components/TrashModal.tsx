@@ -38,7 +38,7 @@ const TrashModal = ({ isOpen, onClose, links, categories, categoryGroups, onUpda
     const nextLinks = links.map(link => {
       if (link.id !== linkId) return link;
       const restoredCategoryId = getActiveCategoryId(link.deletedFromCategoryId || link.categoryId, categories);
-      const { deletedAt, deletedFromCategoryId, ...restored } = link;
+      const { deletedAt: _, deletedFromCategoryId: __, ...restored } = link;
       return { ...restored, categoryId: restoredCategoryId };
     });
     onUpdateData(nextLinks, categories, categoryGroups);
@@ -48,7 +48,7 @@ const TrashModal = ({ isOpen, onClose, links, categories, categoryGroups, onUpda
     const activeGroupIds = new Set(categoryGroups.filter(group => !group.deletedAt).map(group => group.id));
     const nextCategories = categories.map(category => {
       if (category.id !== categoryId) return category;
-      const { deletedAt, ...restored } = category;
+      const { deletedAt: _, ...restored } = category;
       return {
         ...restored,
         groupId: restored.groupId && activeGroupIds.has(restored.groupId) ? restored.groupId : DEFAULT_CATEGORY_GROUP_ID,

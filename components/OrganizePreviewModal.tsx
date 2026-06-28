@@ -132,6 +132,7 @@ const OrganizePreviewModal: React.FC<OrganizePreviewModalProps> = ({ changes, on
 export default OrganizePreviewModal;
 
 // 辅助：把 patchMap 转成可预览的变更列表。
+// eslint-disable-next-line react-refresh/only-export-components
 export const buildOrganizeChanges = (
   links: LinkItem[],
   categories: Category[],

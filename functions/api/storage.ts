@@ -213,11 +213,11 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
       );
       const lockedCategoryIds = new Set(
         (parsed.categories || [])
-          .filter((cat: any) => cat && cat.password && cat.passwordSalt && !cat.deletedAt)
-          .map((cat: any) => cat.id)
+          .filter((cat: { password?: string; passwordSalt?: string; deletedAt?: number; id: string }) => cat && cat.password && cat.passwordSalt && !cat.deletedAt)
+          .map((cat: { id: string }) => cat.id)
       );
       if (lockedCategoryIds.size > 0) {
-        const filteredLinks = (parsed.links || []).filter((link: any) => {
+        const filteredLinks = (parsed.links || []).filter((link: { deletedAt?: number; categoryId?: string }) => {
           if (!link || link.deletedAt) return true; // 软删除链接照常返回（合并逻辑需要）
           if (lockedCategoryIds.has(link.categoryId) && !unlockedIds.has(link.categoryId)) {
             return false;
@@ -246,7 +246,6 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
 export const onRequestPost = async (context: { request: Request; env: Env }) => {
   const { request, env } = context;
   const corsHeaders = await getCorsHeaders(request, env);
-  const providedPassword = request.headers.get('x-auth-password');
   const serverPassword = env.PASSWORD;
 
   try {
@@ -333,11 +332,10 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
         });
       }
 
-      if (!serverPassword || providedPassword !== serverPassword) {
-        const authCheck = await validateAuth(request, env, corsHeaders, { requireSession: true });
-        if (!authCheck.ok) {
-          return authCheck.response;
-        }
+      // 统一走 validateAuth，不再因 providedPassword === serverPassword 短路绕过过期策略。
+      const authCheck = await validateAuth(request, env, corsHeaders, { requireSession: true });
+      if (!authCheck.ok) {
+        return authCheck.response;
       }
 
       let finalIcon = icon;

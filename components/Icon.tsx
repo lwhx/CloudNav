@@ -33,6 +33,7 @@ const iconMap: Record<string, LucideIcon> = {
   Type, Upload, User, Users, Volume2, Wifi, Wind, X, Zap
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const getSupportedIconName = (iconName: string) => {
   const trimmedName = iconName.trim();
   if (!trimmedName) return '';
@@ -47,6 +48,7 @@ export const getSupportedIconName = (iconName: string) => {
   return iconMap[capitalizedName] ? capitalizedName : '';
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const hasSupportedIcon = (iconName: string) => Boolean(getSupportedIconName(iconName));
 
 const Icon: React.FC<IconProps> = ({ name, size = 20, className }) => {

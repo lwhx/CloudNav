@@ -97,6 +97,7 @@ export const useCategoryAccess = ({
       console.error('Category action auth error:', error);
       return false;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buildAuthHeaders]);
 
   const openCategoryActionAuth = useCallback((action: 'edit' | 'delete', categoryId: string, categoryName: string) => {

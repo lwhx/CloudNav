@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useEscapeKey } from '../hooks/useEscapeKey';
-import { X, Plus, Trash2, Edit2, Check, Globe, Search, ExternalLink, RotateCcw } from 'lucide-react';
-import { ExternalSearchSource, SearchMode } from '../types';
+import { X, Plus, Trash2, Check, Globe, Search, ExternalLink, RotateCcw } from 'lucide-react';
+import { ExternalSearchSource } from '../types';
 
 interface SearchConfigModalProps {
   isOpen: boolean;
@@ -14,7 +14,7 @@ const SearchConfigModal: React.FC<SearchConfigModalProps> = ({
   isOpen, onClose, sources, onSave 
 }) => {
   const [localSources, setLocalSources] = useState<ExternalSearchSource[]>(sources);
-  const [isEditing, setIsEditing] = useState<string | null>(null);
+  const [, setIsEditing] = useState<string | null>(null);
   const [newSource, setNewSource] = useState<Partial<ExternalSearchSource>>({
     name: '',
     url: '',
@@ -43,14 +43,6 @@ const SearchConfigModal: React.FC<SearchConfigModalProps> = ({
     
     setLocalSources([...localSources, source]);
     setNewSource({ name: '', url: '', icon: 'Globe', enabled: true });
-  };
-
-  const handleEditSource = (id: string) => {
-    setIsEditing(id);
-  };
-
-  const handleSaveEdit = (id: string) => {
-    setIsEditing(null);
   };
 
   const handleDeleteSource = (id: string) => {

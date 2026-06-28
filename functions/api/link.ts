@@ -160,7 +160,8 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
       categoryName: targetCategory.name,
     }, corsHeaders);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to save link';
-    return buildJsonResponse({ error: message }, corsHeaders, 500);
+    // 不回显 error.message：可能含内部路径或环境信息。
+    console.log('link quick-add error:', error);
+    return buildJsonResponse({ error: 'Failed to save link' }, corsHeaders, 500);
   }
 };

@@ -1,22 +1,19 @@
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Search, Plus, Upload, Moon, Sun, Menu, 
-  Trash2, Edit2, Loader2, Cloud, CheckCircle2, AlertCircle,
-  Pin, Settings, Lock, CloudCog, Github, GitFork, GripVertical, Save, CheckSquare, LogOut, ExternalLink, X, Info, ChevronDown, ChevronRight, Tag, Bookmark
+  Trash2, Loader2, Cloud, CheckCircle2, AlertCircle,
+  Pin, Settings, Lock, CloudCog, GitFork, GripVertical, Save, CheckSquare, LogOut, ExternalLink, X, ChevronDown, ChevronRight, Tag, Bookmark
 } from 'lucide-react';
 import {
   DndContext,
-  closestCenter,
   closestCorners,
 } from '@dnd-kit/core';
 import {
   SortableContext,
-  verticalListSortingStrategy,
   rectSortingStrategy,
 } from '@dnd-kit/sortable';
-import { LinkItem, Category, CategoryGroup, DEFAULT_CATEGORIES, DEFAULT_CATEGORY_GROUP, DEFAULT_CATEGORY_GROUP_ID, INITIAL_LINKS, WebDavConfig, AIConfig, SearchMode, ExternalSearchSource, SearchConfig, AICategorySuggestion } from './types';
-import { parseBookmarks } from './services/bookmarkParser';
+import { LinkItem, Category, CategoryGroup, DEFAULT_CATEGORIES, DEFAULT_CATEGORY_GROUP, DEFAULT_CATEGORY_GROUP_ID, WebDavConfig, AIConfig, SearchConfig, AICategorySuggestion, SiteSettings } from './types';
 import Icon from './components/Icon';
 import LinkModal from './components/LinkModal';
 import AuthModal from './components/AuthModal';
@@ -53,7 +50,6 @@ const AUTH_KEY = 'cloudnav_auth_token';
 const AUTH_TIME_KEY = 'lastLoginTime';
 const WEBDAV_CONFIG_KEY = 'cloudnav_webdav_config';
 const AI_CONFIG_KEY = 'cloudnav_ai_config';
-const SEARCH_CONFIG_KEY = 'cloudnav_search_config';
 
 const mergeCategoryGroups = (currentGroups: CategoryGroup[], incomingGroups: CategoryGroup[] = []) => {
   const map = new Map<string, CategoryGroup>();
@@ -141,7 +137,7 @@ function App() {
       if (saved) {
           try {
               return normalizeAIConfig(JSON.parse(saved), process.env.API_KEY || '');
-          } catch (e) {}
+          } catch { /* ignore corrupted local config */ }
       }
       return getDefaultAIConfig(process.env.API_KEY || '');
   });
@@ -229,7 +225,6 @@ function App() {
     setSearchMode,
     externalSearchSources,
     setExternalSearchSources,
-    isLoadingSearchConfig,
     setIsLoadingSearchConfig,
     showSearchSourcePopup,
     setShowSearchSourcePopup,
@@ -237,9 +232,7 @@ function App() {
     setHoveredSearchSource,
     selectedSearchSource,
     setSelectedSearchSource,
-    isIconHovered,
     setIsIconHovered,
-    isPopupHovered,
     setIsPopupHovered,
     handleSearchSourceSelect,
     handleSaveSearchConfig,
@@ -260,14 +253,10 @@ function App() {
     unlockedCategoryIds,
     catAuthModalData,
     setCatAuthModalData,
-    categoryActionAuth,
     handleCategoryClick,
     handleUnlockCategory,
-    handleUpdateCategories,
     handleDeleteCategory,
     handleCategoryActionAuth,
-    openCategoryActionAuth,
-    closeCategoryActionAuth,
     isCategoryLocked,
   } = useCategoryAccess({
     categories,
@@ -428,13 +417,14 @@ function App() {
             return true;
         }
         return false;
-      } catch (e) {
+      } catch {
           return false;
       }
   };
 
   const handleLogout = () => {
-      clearAuthSession();
+      clearAuthSession();
+
       setSyncStatus('offline');
       // 退出后重新加载本地数据
       loadFromLocal();
@@ -500,7 +490,7 @@ function App() {
       showToast(`成功导入 ${importedLinks.length} 个新书签`, 'success');
   };
 
-  const handleSaveAIConfig = async (config: AIConfig, newSiteSettings?: any) => {
+  const handleSaveAIConfig = async (config: AIConfig, newSiteSettings?: SiteSettings) => {
       const normalizedConfig = normalizeAIConfig(config, process.env.API_KEY || '');
       setAiConfig(normalizedConfig);
       localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(normalizedConfig));
@@ -710,6 +700,7 @@ function App() {
         // 如果都没有pinnedOrder字段，则按创建时间排序
         return a.createdAt - b.createdAt;
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [links, categories, unlockedCategoryIds]);
 
   // 拼音索引：仅在 links 变化时重算，供搜索匹配使用。
@@ -723,7 +714,6 @@ function App() {
 
     // Search Filter
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
       result = result.filter(l => matchesLinkQuery(l, searchQuery, pinyinIndex));
     }
 
@@ -741,6 +731,7 @@ function App() {
       // 改为升序排序，这样order值小(旧卡片)的排在前面，order值大(新卡片)的排在后面
       return aOrder - bOrder;
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [links, selectedCategory, searchQuery, categories, unlockedCategoryIds, pinyinIndex]);
 
   // 计算其他目录的搜索结果
@@ -749,8 +740,6 @@ function App() {
       return {};
     }
 
-    const q = searchQuery.toLowerCase();
-    
     // 获取其他目录中匹配的链接
     const otherLinks = links.filter(link => {
       if (link.deletedAt) return false;
@@ -787,12 +776,12 @@ function App() {
     });
 
     return groupedByCategory;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [links, selectedCategory, searchQuery, categories, unlockedCategoryIds]);
 
 
   const {
     isSortingMode,
-    setIsSortingMode,
     isSortingPinned,
     setIsSortingPinned,
     isBatchEditMode,
@@ -813,7 +802,6 @@ function App() {
     cancelPinnedSorting,
     sensors,
     handleDeleteLink,
-    togglePin,
     togglePinFromLink,
   } = useLinkOrganizer({
     links,
