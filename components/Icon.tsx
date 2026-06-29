@@ -54,7 +54,7 @@ export const hasSupportedIcon = (iconName: string) => Boolean(getSupportedIconNa
 const Icon: React.FC<IconProps> = ({ name, size = 20, className }) => {
   const supportedName = getSupportedIconName(name);
   const IconComponent = iconMap[supportedName] || Link;
-  return <IconComponent size={size} className={className} />;
+  return <IconComponent size={size} className={className} aria-hidden="true" />;
 };
 
 export default Icon;

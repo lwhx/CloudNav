@@ -1410,7 +1410,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+    >
       <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden border border-slate-200 dark:border-slate-700 flex max-h-[90vh] flex-col md:flex-row">
         
         <div className="w-full md:w-48 bg-slate-50 dark:bg-slate-800/50 border-r border-slate-200 dark:border-slate-700 flex flex-row md:flex-col p-2 gap-1 overflow-x-auto shrink-0">
@@ -1432,8 +1437,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-white dark:bg-slate-800">
              <div className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-slate-700 shrink-0">
-                <h3 className="text-lg font-semibold dark:text-white">设置</h3>
-                <button onClick={onClose} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors">
+                <h3 id="settings-modal-title" className="text-lg font-semibold dark:text-white">设置</h3>
+                <button onClick={onClose} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors" aria-label="关闭设置">
                     <X className="w-5 h-5 dark:text-slate-400" />
                 </button>
             </div>

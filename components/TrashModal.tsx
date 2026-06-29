@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useState, useRef } from 'react';
+import { useModalA11y } from '../hooks/useModalA11y';
 import { X, RotateCcw, Trash2 } from 'lucide-react';
 import { Category, CategoryGroup, DEFAULT_CATEGORY_GROUP_ID, LinkItem } from '../types';
 import { TRASH_RETENTION_MS } from '../services/appDataPersistence';
@@ -26,7 +26,9 @@ const formatDeletedTime = (deletedAt?: number) => {
 const isExpired = (deletedAt?: number) => typeof deletedAt === 'number' && Date.now() - deletedAt > TRASH_RETENTION_MS;
 
 const TrashModal = ({ isOpen, onClose, links, categories, categoryGroups, onUpdateData }: TrashModalProps) => {
-  const [activeTab, setActiveTab] = useState<'links' | 'categories'>('links');  useEscapeKey(onClose, isOpen);
+  const [activeTab, setActiveTab] = useState<'links' | 'categories'>('links');
+  const overlayRef = useRef<HTMLDivElement>(null);
+  useModalA11y({ isOpen, overlayRef, onClose });
 
 
   if (!isOpen) return null;
@@ -77,14 +79,20 @@ const TrashModal = ({ isOpen, onClose, links, categories, categoryGroups, onUpda
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+    <div
+      ref={overlayRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="trash-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+    >
       <div className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-800">
         <div className="flex items-center justify-between border-b border-slate-200 p-4 dark:border-slate-700">
           <div>
-            <h3 className="text-lg font-semibold dark:text-white">回收站</h3>
+            <h3 id="trash-modal-title" className="text-lg font-semibold dark:text-white">回收站</h3>
             <p className="mt-1 text-xs text-slate-500">删除的数据会保留 30 天，过期后在保存流程中自动清理。</p>
           </div>
-          <button onClick={onClose} className="rounded-full p-1 transition-colors hover:bg-slate-100 dark:hover:bg-slate-700">
+          <button onClick={onClose} className="rounded-full p-1 transition-colors hover:bg-slate-100 dark:hover:bg-slate-700" aria-label="关闭回收站">
             <X className="h-5 w-5 dark:text-slate-400" />
           </button>
         </div>

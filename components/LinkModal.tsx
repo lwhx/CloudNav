@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useEscapeKey } from '../hooks/useEscapeKey';
+import { useModalA11y } from '../hooks/useModalA11y';
 import { X, Sparkles, Loader2, Pin, Wand2, Trash2 } from 'lucide-react';
 import { LinkItem, Category, AIConfig } from '../types';
 import { normalizeTags } from '../services/appDataPersistence';
@@ -22,6 +22,7 @@ interface LinkModalProps {
 const parseTagInput = (value: string) => normalizeTags(value.split(/[，,\n]/));
 
 const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete, categories, initialData, isEditing = false, aiConfig, defaultCategoryId, onNotify }) => {
+  const overlayRef = useRef<HTMLDivElement>(null);
   const [title, setTitle] = useState('');
   const [url, setUrl] = useState('');
   const [description, setDescription] = useState('');
@@ -369,17 +370,24 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     } finally {
       setIsFetchingIcon(false);
     }
-  };  useEscapeKey(onClose, isOpen);
+  };
+  useModalA11y({ isOpen, overlayRef, onClose, initialFocusSelector: 'input[name="link-title"]' });
 
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+    <div
+      ref={overlayRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="link-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+    >
       <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200 dark:border-slate-700">
         <div className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-slate-700">
           <div className="flex items-center gap-2">
-            <h3 className="text-lg font-semibold dark:text-white">
+            <h3 id="link-modal-title" className="text-lg font-semibold dark:text-white">
               {isEditing ? '编辑链接' : '添加新链接'}
             </h3>
             <button

@@ -1,5 +1,5 @@
-import React from 'react';
-import { useEscapeKey } from '../hooks/useEscapeKey';
+import React, { useRef } from 'react';
+import { useModalA11y } from '../hooks/useModalA11y';
 import { X, Download } from 'lucide-react';
 
 interface QRCodeModalProps {
@@ -14,7 +14,9 @@ const QRCodeModal: React.FC<QRCodeModalProps> = ({
   onClose,
   url,
   title
-}) => {  useEscapeKey(onClose, isOpen);
+}) => {
+  const overlayRef = useRef<HTMLDivElement>(null);
+  useModalA11y({ isOpen, overlayRef, onClose });
 
   if (!isOpen) return null;
 
@@ -32,18 +34,25 @@ const QRCodeModal: React.FC<QRCodeModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+    <div
+      ref={overlayRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="qrcode-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+    >
       <div className="bg-white dark:bg-slate-800 rounded-xl shadow-xl max-w-sm w-full mx-4 p-6 relative">
         {/* 关闭按钮 */}
         <button
           onClick={onClose}
           className="absolute top-4 right-4 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+          aria-label="关闭二维码弹窗"
         >
           <X size={20} />
         </button>
 
         {/* 标题 */}
-        <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4 text-center">
+        <h3 id="qrcode-modal-title" className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4 text-center">
           二维码
         </h3>
 

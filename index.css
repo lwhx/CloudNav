@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+/* Tailwind v4 theme tokens (replaces index.html inline tailwind.config) */
+@theme {
+  --color-primary: #3b82f6;
+  --color-secondary: #64748b;
+  --color-dark: #0f172a;
+  --color-card: #1e293b;
+  --breakpoint-xs: 480px;
+}
+
+/* Dark mode driven by .dark class on <html> */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Base body font + transitions kept from original index.html */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Custom scrollbar for sidebar */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Simple CSS-only tooltip transition */
+.tooltip-custom {
+  transition: opacity 0.2s, visibility 0.2s;
+  pointer-events: none;
+}
+
+/* Respect reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Visible focus ring for keyboard navigation (a11y) */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}

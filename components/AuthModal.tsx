@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Lock, ArrowRight, Loader2, X } from 'lucide-react';
+import { useModalA11y } from '../hooks/useModalA11y';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -13,6 +14,10 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onLogin, onClose, canClos
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const overlayRef = useRef<HTMLDivElement>(null);
+
+  const handleClose = canClose ? onClose : undefined;
+  useModalA11y({ isOpen, overlayRef, onClose: handleClose, initialFocusSelector: 'input[type="password"]' });
 
   useEffect(() => {
     if (!isOpen) {
@@ -37,7 +42,14 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onLogin, onClose, canClos
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md">
+    <div
+      ref={overlayRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="auth-modal-title"
+      aria-describedby="auth-modal-desc"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md"
+    >
       <div className="relative bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-200 dark:border-slate-700 p-8">
         {canClose && onClose && (
           <button
@@ -53,8 +65,8 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onLogin, onClose, canClos
           <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mb-4 text-blue-600 dark:text-blue-400">
             <Lock size={32} />
           </div>
-          <h2 className="text-xl font-bold dark:text-white">身份验证</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400 text-center mt-2">
+          <h2 id="auth-modal-title" className="text-xl font-bold dark:text-white">身份验证</h2>
+          <p id="auth-modal-desc" className="text-sm text-slate-500 dark:text-slate-400 text-center mt-2">
             {description || '请输入部署时设置的 PASSWORD 以同步数据'}
           </p>
         </div>

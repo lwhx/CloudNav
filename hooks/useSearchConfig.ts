@@ -28,33 +28,62 @@ export const useSearchConfig = ({ authToken, buildAuthHeaders, requireAuth, sear
   const [showSearchSourcePopup, setShowSearchSourcePopup] = useState(false);
   const [hoveredSearchSource, setHoveredSearchSource] = useState<ExternalSearchSource | null>(null);
   const [selectedSearchSource, setSelectedSearchSource] = useState<ExternalSearchSource | null>(null);
+  // 保留 hover 状态用于图标预览增强，但弹窗显隐改由 click 控制
   const [isIconHovered, setIsIconHovered] = useState(false);
   const [isPopupHovered, setIsPopupHovered] = useState(false);
   const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const popupRef = useRef<HTMLDivElement | null>(null);
 
+  // 点击外部或按 Escape 关闭弹窗（a11y：键盘用户可退出）
   useEffect(() => {
-    if (isIconHovered || isPopupHovered) {
-      if (hideTimeoutRef.current) {
-        clearTimeout(hideTimeoutRef.current);
-        hideTimeoutRef.current = null;
-      }
-      setShowSearchSourcePopup(true);
-    } else {
-      if (hideTimeoutRef.current) {
-        clearTimeout(hideTimeoutRef.current);
-      }
-      hideTimeoutRef.current = setTimeout(() => {
+    if (!showSearchSourcePopup) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (popupRef.current && !popupRef.current.contains(e.target as Node)) {
         setShowSearchSourcePopup(false);
         setHoveredSearchSource(null);
-      }, 100);
-    }
+      }
+    };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowSearchSourcePopup(false);
+        setHoveredSearchSource(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [showSearchSourcePopup]);
 
+  // hover 仅作增强：鼠标离开图标+弹窗时延迟关闭（click 已打开的情况下）
+  useEffect(() => {
+    if (showSearchSourcePopup && !isIconHovered && !isPopupHovered) {
+      if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+      hideTimeoutRef.current = setTimeout(() => {
+        // hover 增强关闭：仅在非聚焦时关闭，避免抢占 click 状态
+        if (!popupRef.current?.contains(document.activeElement)) {
+          setShowSearchSourcePopup(false);
+          setHoveredSearchSource(null);
+        }
+      }, 200);
+    }
     return () => {
       if (hideTimeoutRef.current) {
         clearTimeout(hideTimeoutRef.current);
       }
     };
-  }, [isIconHovered, isPopupHovered]);
+  }, [isIconHovered, isPopupHovered, showSearchSourcePopup]);
+
+  // click 切换弹窗（主交互方式，触屏/键盘可用）
+  const toggleSearchSourcePopup = useCallback(() => {
+    setShowSearchSourcePopup(prev => {
+      if (!prev) return true;
+      setHoveredSearchSource(null);
+      return false;
+    });
+  }, []);
 
   const handleSaveSearchConfig = useCallback(async (
     sources: ExternalSearchSource[],
@@ -164,6 +193,8 @@ export const useSearchConfig = ({ authToken, buildAuthHeaders, requireAuth, sear
     setIsLoadingSearchConfig,
     showSearchSourcePopup,
     setShowSearchSourcePopup,
+    toggleSearchSourcePopup,
+    popupRef,
     hoveredSearchSource,
     setHoveredSearchSource,
     selectedSearchSource,

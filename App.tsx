@@ -227,7 +227,8 @@ function App() {
     setExternalSearchSources,
     setIsLoadingSearchConfig,
     showSearchSourcePopup,
-    setShowSearchSourcePopup,
+    toggleSearchSourcePopup,
+    popupRef,
     hoveredSearchSource,
     setHoveredSearchSource,
     selectedSearchSource,
@@ -1192,8 +1193,11 @@ function App() {
               <div className={`relative w-full max-w-lg ${isMobileSearchOpen ? 'block' : 'hidden'} sm:block`}>
                 {/* 搜索源选择弹出窗口 */}
                 {searchMode === 'external' && showSearchSourcePopup && (
-                  <div 
+                  <div
+                    ref={popupRef}
                     className="absolute left-0 top-full mt-2 w-full bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 p-3 z-50"
+                    role="listbox"
+                    aria-label="搜索源选择"
                     onMouseEnter={() => setIsPopupHovered(true)}
                     onMouseLeave={() => setIsPopupHovered(false)}
                   >
@@ -1207,6 +1211,9 @@ function App() {
                             onMouseEnter={() => setHoveredSearchSource(source)}
                             onMouseLeave={() => setHoveredSearchSource(null)}
                             className="px-2 py-2 text-sm rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center gap-1 justify-center"
+                            role="option"
+                            aria-selected={selectedSearchSource?.id === source.id}
+                            aria-label={`使用 ${source.name} 搜索`}
                           >
                             <img 
                               src={`https://www.faviconextractor.com/favicon/${new URL(source.url).hostname}?larger=true`}
@@ -1224,21 +1231,22 @@ function App() {
                   </div>
                 )}
 
-                <div 
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 cursor-pointer"
+                <button
+                  type="button"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 cursor-pointer bg-transparent border-0 p-0"
+                  aria-haspopup="listbox"
+                  aria-expanded={showSearchSourcePopup}
+                  aria-label={selectedSearchSource ? `当前搜索源：${selectedSearchSource.name}，点击切换` : '选择搜索源'}
                   onMouseEnter={() => searchMode === 'external' && setIsIconHovered(true)}
                   onMouseLeave={() => setIsIconHovered(false)}
                   onClick={() => {
                     if (searchMode === 'external') {
-                      setShowSearchSourcePopup(!showSearchSourcePopup);
+                      toggleSearchSourcePopup();
                     }
                   }}
                 >
                   {searchMode === 'internal' ? (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-search">
-                      <path d="m21 21-4.35-4.35"></path>
-                      <circle cx="11" cy="11" r="8"></circle>
-                    </svg>
+                    <Search size={16} />
                   ) : (hoveredSearchSource || selectedSearchSource) ? (
                     <img 
                       src={`https://www.faviconextractor.com/favicon/${new URL((hoveredSearchSource || selectedSearchSource).url).hostname}?larger=true`}
@@ -1252,10 +1260,11 @@ function App() {
                   ) : (
                     <Search size={16} />
                   )}
-                </div>
-                
+                </button>
+
                 <input
                   type="text"
+                  aria-label="搜索框"
                   placeholder={
                     searchMode === 'internal' 
                       ? "搜索站内内容..." 
