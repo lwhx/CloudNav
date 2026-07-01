@@ -133,6 +133,7 @@ export const useLinkOrganizer = ({
       // 用 UUID 避免批量添加/快速保存时同毫秒 id 碰撞
       id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `${now}-${Math.random().toString(36).slice(2)}`,
       createdAt: now,
+      updatedAt: now,
       order: maxOrder + 1,
       pinnedOrder: data.pinned ? links.filter(l => l.pinned).length : undefined,
     };
@@ -150,6 +151,8 @@ export const useLinkOrganizer = ({
       const updatedLinks = [...links, newLink].sort((a, b) => {
         if (a.pinned && !b.pinned) return -1;
         if (!a.pinned && b.pinned) return 1;
+        if (a.important && !b.important) return -1;
+        if (!a.important && b.important) return 1;
 
         const aOrder = a.order !== undefined ? a.order : a.createdAt;
         const bOrder = b.order !== undefined ? b.order : b.createdAt;
@@ -176,7 +179,8 @@ export const useLinkOrganizer = ({
       processedUrl = 'https://' + processedUrl;
     }
 
-    const updated = links.map(l => l.id === editingLink.id ? { ...l, ...data, url: processedUrl, tags: normalizeTags(data.tags) } : l);
+    const updatedAt = Date.now();
+    const updated = links.map(l => l.id === editingLink.id ? { ...l, ...data, url: processedUrl, tags: normalizeTags(data.tags), updatedAt } : l);
     updateData(updated, categories);
     if (selectedCategory !== 'all' && selectedCategory !== data.categoryId) {
       setSelectedCategory(data.categoryId);
@@ -312,13 +316,22 @@ export const useLinkOrganizer = ({
   }, [authToken, categories, links, setIsAuthOpen, updateData]);
 
   const togglePinFromLink = useCallback((link: LinkItem) => {
+    const updatedAt = Date.now();
     const updated = links.map(l => {
       if (l.id === link.id) {
         const isPinned = !l.pinned;
-        return { ...l, pinned: isPinned, pinnedOrder: isPinned ? links.filter(x => x.pinned).length : undefined };
+        return { ...l, pinned: isPinned, pinnedOrder: isPinned ? links.filter(x => x.pinned).length : undefined, updatedAt };
       }
       return l;
     });
+    updateData(updated, categories);
+  }, [categories, links, updateData]);
+
+  const toggleImportantFromLink = useCallback((link: LinkItem) => {
+    const updatedAt = Date.now();
+    const updated = links.map(l => (
+      l.id === link.id ? { ...l, important: !l.important, updatedAt } : l
+    ));
     updateData(updated, categories);
   }, [categories, links, updateData]);
 
@@ -358,5 +371,6 @@ export const useLinkOrganizer = ({
     handleDeleteLink,
     togglePin,
     togglePinFromLink,
+    toggleImportantFromLink,
   };
 };

@@ -112,6 +112,14 @@ const mergeTags = (currentTags: string[] | undefined, rawTags: string, remove = 
   return normalizeTags([...(currentTags || []), ...parsedTags]);
 };
 
+const compareLinksByImportanceAndOrder = (a: LinkItem, b: LinkItem) => {
+  if (a.important && !b.important) return -1;
+  if (!a.important && b.important) return 1;
+  const aOrder = a.order !== undefined ? a.order : a.createdAt;
+  const bOrder = b.order !== undefined ? b.order : b.createdAt;
+  return aOrder - bOrder;
+};
+
 
 function App() {
   const { darkMode, themeTransition, themeButtonRef, toggleTheme } = useTheme();
@@ -726,12 +734,7 @@ function App() {
     // 按照order字段排序，如果没有order字段则按创建时间排序
     // 修改排序逻辑：order值越大排在越前面，新增的卡片order值最大，会排在最前面
     // 我们需要反转这个排序，让新增的卡片(order值最大)排在最后面
-    return result.sort((a, b) => {
-      const aOrder = a.order !== undefined ? a.order : a.createdAt;
-      const bOrder = b.order !== undefined ? b.order : b.createdAt;
-      // 改为升序排序，这样order值小(旧卡片)的排在前面，order值大(新卡片)的排在后面
-      return aOrder - bOrder;
-    });
+    return result.sort(compareLinksByImportanceAndOrder);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [links, selectedCategory, searchQuery, categories, unlockedCategoryIds, pinyinIndex]);
 
@@ -769,11 +772,7 @@ function App() {
 
     // 对每个目录内的链接进行排序
     Object.keys(groupedByCategory).forEach(categoryId => {
-      groupedByCategory[categoryId].sort((a, b) => {
-        const aOrder = a.order !== undefined ? a.order : a.createdAt;
-        const bOrder = b.order !== undefined ? b.order : b.createdAt;
-        return aOrder - bOrder;
-      });
+      groupedByCategory[categoryId].sort(compareLinksByImportanceAndOrder);
     });
 
     return groupedByCategory;
@@ -804,6 +803,7 @@ function App() {
     sensors,
     handleDeleteLink,
     togglePinFromLink,
+    toggleImportantFromLink,
   } = useLinkOrganizer({
     links,
     categories,
@@ -826,12 +826,14 @@ function App() {
     handleContextMenu, closeContextMenu, copyLinkToClipboard,
     showQRCode, editLinkFromContextMenu, deleteLinkFromContextMenu,
     togglePinFromContextMenu, closeQrCodeModal,
+    toggleImportantFromContextMenu,
   } = useContextMenu({
     isBatchEditMode,
     requireAuth,
     onEditLink: (link) => { setEditingLink(link); setIsModalOpen(true); },
     onDeleteLink: (linkId) => { const now = Date.now(); const newLinks = links.map(l => l.id === linkId ? { ...l, deletedAt: now, deletedFromCategoryId: l.categoryId, pinned: false } : l); updateData(newLinks, categories, categoryGroups); },
     onTogglePin: togglePinFromLink,
+    onToggleImportant: toggleImportantFromLink,
   });
 
 
@@ -846,6 +848,12 @@ function App() {
       siteSettings={siteSettings}
       onToggleSelection={toggleLinkSelection}
       onContextMenu={handleContextMenu}
+      onToggleImportant={(targetLink, event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!requireAuth()) return;
+        toggleImportantFromLink(targetLink);
+      }}
       onEdit={(targetLink, event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -1703,6 +1711,7 @@ function App() {
             onEditLink={editLinkFromContextMenu}
             onDeleteLink={deleteLinkFromContextMenu}
             onTogglePin={togglePinFromContextMenu}
+            onToggleImportant={toggleImportantFromContextMenu}
           />
 
           {/* 二维码模态框 */}

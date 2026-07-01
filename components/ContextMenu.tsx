@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Copy, QrCode, Edit2, Trash2, Pin } from 'lucide-react';
+import { Copy, QrCode, Edit2, Trash2, Pin, Star } from 'lucide-react';
 
 interface ContextMenuProps {
   isOpen: boolean;
@@ -10,6 +10,7 @@ interface ContextMenuProps {
   onEditLink: () => void;
   onDeleteLink: () => void;
   onTogglePin: () => void;
+  onToggleImportant: () => void;
 }
 
 const ContextMenu: React.FC<ContextMenuProps> = ({
@@ -20,7 +21,8 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
   onShowQRCode,
   onEditLink,
   onDeleteLink,
-  onTogglePin
+  onTogglePin,
+  onToggleImportant
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -65,6 +67,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
     { icon: QrCode, label: '显示二维码', onClick: onShowQRCode },
     { icon: Edit2, label: '编辑链接', onClick: onEditLink },
     { icon: Pin, label: '置顶/取消置顶', onClick: onTogglePin },
+    { icon: Star, label: '标记/取消重点', onClick: onToggleImportant },
     { icon: Trash2, label: '删除链接', onClick: onDeleteLink, className: 'text-red-600 dark:text-red-400' }
   ];
 

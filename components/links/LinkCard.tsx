@@ -1,5 +1,5 @@
 import type React from 'react';
-import { Settings } from 'lucide-react';
+import { Settings, Star } from 'lucide-react';
 import { LinkItem, SiteSettings } from '../../types';
 
 interface LinkCardProps {
@@ -10,6 +10,7 @@ interface LinkCardProps {
   onToggleSelection: (linkId: string) => void;
   onContextMenu: (event: React.MouseEvent, link: LinkItem) => void;
   onEdit: (link: LinkItem, event: React.MouseEvent) => void;
+  onToggleImportant: (link: LinkItem, event: React.MouseEvent) => void;
 }
 
 const LinkCard = ({
@@ -20,8 +21,10 @@ const LinkCard = ({
   onToggleSelection,
   onContextMenu,
   onEdit,
+  onToggleImportant,
 }: LinkCardProps) => {
   const isDetailedView = siteSettings.cardStyle === 'detailed';
+  const isImportant = Boolean(link.important);
   const visibleTags = (link.tags || []).slice(0, 3);
   const hiddenTagCount = Math.max((link.tags || []).length - visibleTags.length, 0);
 
@@ -48,11 +51,20 @@ const LinkCard = ({
         }`}>
           {link.icon ? <img src={link.icon} alt="" className="w-5 h-5"/> : link.title.charAt(0)}
         </div>
-        <h3 className={`truncate overflow-hidden text-ellipsis ${
+        <h3 className={`min-w-0 flex-1 truncate overflow-hidden text-ellipsis ${
           isDetailedView ? 'text-base text-slate-900 dark:text-slate-100' : 'text-sm font-medium text-slate-800 dark:text-slate-200'
         }`} title={link.title}>
           {link.title}
         </h3>
+        {isImportant && (
+          <span
+            className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-400/15 dark:text-amber-200"
+            title="重点链接"
+          >
+            <Star size={11} className="fill-current" />
+            重点
+          </span>
+        )}
       </div>
       {isDetailedView && link.description && (
         <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed line-clamp-2">
@@ -68,6 +80,8 @@ const LinkCard = ({
       className={`group relative transition-all duration-200 hover:shadow-lg hover:shadow-blue-100/50 dark:hover:shadow-blue-900/20 ${
         isSelected
           ? 'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800'
+          : isImportant
+            ? 'bg-amber-50 border-amber-200 shadow-amber-100/60 hover:bg-amber-100/70 hover:border-amber-300 dark:bg-amber-950/30 dark:border-amber-700/60 dark:shadow-amber-950/30 dark:hover:bg-amber-900/30 dark:hover:border-amber-500/70'
           : 'bg-white dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 border-slate-200 dark:border-slate-700'
       } ${isBatchEditMode ? 'cursor-pointer' : ''} ${
         isDetailedView
@@ -102,6 +116,19 @@ const LinkCard = ({
         <div className={`flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity bg-blue-50 dark:bg-blue-900/20 backdrop-blur-sm rounded-md p-1 absolute ${
           isDetailedView ? 'top-3 right-3' : 'top-1/2 -translate-y-1/2 right-2'
         }`}>
+          <button
+            onClick={(event) => onToggleImportant(link, event)}
+            className={`p-1 rounded-md ${
+              isImportant
+                ? 'text-amber-600 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900/40'
+                : 'text-slate-400 hover:text-amber-500 hover:bg-slate-100 dark:hover:bg-slate-700'
+            }`}
+            title={isImportant ? "取消重点" : "标记重点"}
+            aria-label={`${isImportant ? '取消重点' : '标记重点'} ${link.title}`}
+            aria-pressed={isImportant}
+          >
+            <Star size={18} className={isImportant ? "fill-current" : ""} />
+          </button>
           <button
             onClick={(event) => onEdit(link, event)}
             className="p-1 text-slate-400 hover:text-blue-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md"
