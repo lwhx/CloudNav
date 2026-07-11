@@ -706,6 +706,23 @@ function App() {
     contentScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const openGroupManager = () => {
+    if (!requireAuth()) return;
+    setSidebarOpen(false);
+    setIsCatManagerOpen(true);
+  };
+
+  const handleCategoryManagerUpdate = (newCategories: Category[], newCategoryGroups?: CategoryGroup[]) => {
+    const nextGroups = newCategoryGroups || categoryGroups;
+    const previousGroupIds = new Set(categoryGroups.filter(group => !group.deletedAt).map(group => group.id));
+    const addedGroup = nextGroups.find(group => !group.deletedAt && !previousGroupIds.has(group.id));
+    updateData(links, newCategories, nextGroups);
+    if (addedGroup) {
+      setActiveGroupId(addedGroup.id);
+      localStorage.setItem(ACTIVE_GROUP_KEY, addedGroup.id);
+    }
+  };
+
   useEffect(() => {
     if (!sidebarOpen) return;
     const handleEscape = (event: KeyboardEvent) => {
@@ -974,7 +991,7 @@ function App() {
         onClose={() => setIsCatManagerOpen(false)}
         categories={categories}
         categoryGroups={categoryGroups}
-        onUpdateCategories={(newCategories, newCategoryGroups) => updateData(links, newCategories, newCategoryGroups || categoryGroups)}
+        onUpdateCategories={handleCategoryManagerUpdate}
         onDeleteCategory={handleDeleteCategory}
         onVerifyPassword={handleCategoryActionAuth}
       />
@@ -1048,10 +1065,13 @@ function App() {
       <GroupSidebar
         groups={navigationGroups}
         activeGroupId={activeGroup?.id || ''}
+        activeCategoryId={activeAnchorId}
         navTitle={siteSettings.navTitle}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         onSelect={selectGroup}
+        onSelectCategory={(categoryId) => { scrollToCategory(categoryId); setSidebarOpen(false); }}
+        onManageGroups={openGroupManager}
         footer={<>
           <div className="grid grid-cols-4 gap-2">
             {[
