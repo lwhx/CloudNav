@@ -1067,12 +1067,10 @@ function App() {
       <GroupSidebar
         groups={navigationGroups}
         activeGroupId={activeGroup?.id || ''}
-        activeCategoryId={activeAnchorId}
         navTitle={siteSettings.navTitle}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         onSelect={selectGroup}
-        onSelectCategory={(categoryId) => { scrollToCategory(categoryId); setSidebarOpen(false); }}
         onManageGroups={openGroupManager}
         footer={<>
           <div className="grid grid-cols-4 gap-2">
