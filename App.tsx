@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Search, Plus, Moon, Sun, Menu, Loader2, Cloud,
-  Settings, GitFork, LogOut, ExternalLink, X
+  Settings, GitFork, LogOut, ExternalLink, X, FolderPlus
 } from 'lucide-react';
 import { LinkItem, Category, CategoryGroup, DEFAULT_CATEGORIES, DEFAULT_CATEGORY_GROUP, DEFAULT_CATEGORY_GROUP_ID, WebDavConfig, AIConfig, SearchConfig, AICategorySuggestion, SiteSettings } from './types';
 import Icon from './components/Icon';
@@ -91,9 +91,11 @@ const buildGroupedCategories = (groups: CategoryGroup[], categories: Category[])
     groupMap.get(groupId)?.categories.push(category);
   });
 
-  return Array.from(groupMap.values())
-    .filter(group => group.id === DEFAULT_CATEGORY_GROUP_ID || group.categories.length > 0)
-    .sort((a, b) => (a.order || 0) - (b.order || 0));
+  groupMap.forEach(group => {
+    group.categories.sort((left, right) => (left.order ?? 0) - (right.order ?? 0));
+  });
+
+  return Array.from(groupMap.values()).sort((a, b) => (a.order || 0) - (b.order || 0));
 };
 
 const mergeTags = (currentTags: string[] | undefined, rawTags: string, remove = false) => {
@@ -1357,7 +1359,7 @@ function App() {
                   </>}
                 </div>}
               </section>
-              <div className="space-y-5">{activeGroupCategories.map(category => React.createElement(CategorySection, { key: category.id, category, links: linksByCategory.get(category.id) || [], locked: isCategoryLocked(category.id), collapsed: collapsedCategoryIds.has(category.id), expanded: expandedCategoryIds.has(category.id), managementMode, sorting: isSortingMode === category.id, siteSettings, sensors, renderLink: renderLinkCard, onUnlock: () => setCatAuthModalData(category), onToggleCollapse: () => toggleCategorySet(setCollapsedCategoryIds, category.id), onToggleExpanded: () => toggleCategorySet(setExpandedCategoryIds, category.id), onAdd: () => { setSelectedCategory(category.id); setEditingLink(undefined); setPrefillLink({ categoryId: category.id }); setIsModalOpen(true); }, onStartSorting: () => { setSelectedCategory(category.id); startSorting(category.id); }, onSaveSorting: saveSorting, onCancelSorting: cancelSorting, onDragEnd: handleDragEnd }))}</div>
+              {activeGroupCategories.length > 0 ? <div className="space-y-5">{activeGroupCategories.map(category => React.createElement(CategorySection, { key: category.id, category, links: linksByCategory.get(category.id) || [], locked: isCategoryLocked(category.id), collapsed: collapsedCategoryIds.has(category.id), expanded: expandedCategoryIds.has(category.id), managementMode, sorting: isSortingMode === category.id, siteSettings, sensors, renderLink: renderLinkCard, onUnlock: () => setCatAuthModalData(category), onToggleCollapse: () => toggleCategorySet(setCollapsedCategoryIds, category.id), onToggleExpanded: () => toggleCategorySet(setExpandedCategoryIds, category.id), onAdd: () => { setSelectedCategory(category.id); setEditingLink(undefined); setPrefillLink({ categoryId: category.id }); setIsModalOpen(true); }, onStartSorting: () => { setSelectedCategory(category.id); startSorting(category.id); }, onSaveSorting: saveSorting, onCancelSorting: cancelSorting, onDragEnd: handleDragEnd }))}</div> : <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center dark:border-slate-700 dark:bg-slate-800/60"><span className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300"><FolderPlus size={24} /></span><h2 className="mt-4 text-base font-bold text-slate-800 dark:text-white">这个一级分类还没有二级分类</h2><p className="mt-1 text-sm text-slate-500">先创建二级分类，再向分类中添加网址。</p><button onClick={openGroupManager} className="mt-5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"><Plus size={15} className="mr-1.5 inline" />添加二级分类</button></div>}
             </div>
           ) : <div className="flex h-full items-center justify-center text-slate-400">暂无可用分组</div>}
         </div>

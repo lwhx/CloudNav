@@ -52,17 +52,36 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
 
   if (!isOpen) return null;
 
-  const activeCategories = categories.filter(category => !category.deletedAt);
-  const activeGroups = activeGroupsOf(categoryGroups);
+  const activeGroups = activeGroupsOf(categoryGroups).sort((left, right) => (left.order ?? 0) - (right.order ?? 0));
+  const groupOrder = new Map(activeGroups.map((group, index) => [group.id, index]));
+  const activeCategories = categories.filter(category => !category.deletedAt).sort((left, right) => {
+    const leftGroup = groupOrder.get(left.groupId || DEFAULT_CATEGORY_GROUP_ID) ?? Number.MAX_SAFE_INTEGER;
+    const rightGroup = groupOrder.get(right.groupId || DEFAULT_CATEGORY_GROUP_ID) ?? Number.MAX_SAFE_INTEGER;
+    return leftGroup - rightGroup || (left.order ?? 0) - (right.order ?? 0);
+  });
 
-  const handleMove = (index: number, direction: 'up' | 'down') => {
-    const newCats = [...categories];
-    if (direction === 'up' && index > 0) {
-      [newCats[index], newCats[index - 1]] = [newCats[index - 1], newCats[index]];
-    } else if (direction === 'down' && index < newCats.length - 1) {
-      [newCats[index], newCats[index + 1]] = [newCats[index + 1], newCats[index]];
-    }
-    onUpdateCategories(newCats, categoryGroups);
+  const handleMove = (categoryId: string, direction: 'up' | 'down') => {
+    const current = categories.find(category => category.id === categoryId);
+    if (!current) return;
+    const currentGroupId = current.groupId || DEFAULT_CATEGORY_GROUP_ID;
+    const siblings = activeCategories.filter(category => (category.groupId || DEFAULT_CATEGORY_GROUP_ID) === currentGroupId);
+    const currentIndex = siblings.findIndex(category => category.id === categoryId);
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= siblings.length) return;
+    const reordered = [...siblings];
+    [reordered[currentIndex], reordered[targetIndex]] = [reordered[targetIndex], reordered[currentIndex]];
+    const orderById = new Map(reordered.map((category, index) => [category.id, index]));
+    onUpdateCategories(categories.map(category => orderById.has(category.id) ? { ...category, order: orderById.get(category.id) } : category), categoryGroups);
+  };
+
+  const handleMoveGroup = (groupId: string, direction: 'up' | 'down') => {
+    const currentIndex = activeGroups.findIndex(group => group.id === groupId);
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= activeGroups.length) return;
+    const reordered = [...activeGroups];
+    [reordered[currentIndex], reordered[targetIndex]] = [reordered[targetIndex], reordered[currentIndex]];
+    const orderById = new Map(reordered.map((group, index) => [group.id, index]));
+    onUpdateCategories(categories, categoryGroups.map(group => orderById.has(group.id) ? { ...group, order: orderById.get(group.id) } : group));
   };
 
   const handlePasswordVerification = async (password: string): Promise<boolean> => {
@@ -156,6 +175,7 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
       name: newCatName.trim(),
       icon: newCatIcon,
       groupId: newCatGroupId,
+      order: activeCategories.filter(category => (category.groupId || DEFAULT_CATEGORY_GROUP_ID) === newCatGroupId).length,
     };
     onUpdateCategories([...categories, newCat], categoryGroups);
     setNewCatName('');
@@ -217,8 +237,12 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
               <span className="text-xs text-slate-400">默认分组不可删除</span>
             </div>
             <div className="space-y-2">
-              {activeGroups.map(group => (
+              {activeGroups.map((group, groupIndex) => (
                 <div key={group.id} className="flex items-center gap-2 rounded-lg bg-slate-50 p-2 dark:bg-slate-700/50">
+                  <div className="flex flex-col gap-0.5">
+                    <button onClick={() => handleMoveGroup(group.id, 'up')} disabled={groupIndex === 0} className="rounded p-0.5 text-slate-400 hover:text-blue-500 disabled:opacity-25" aria-label={`上移 ${group.name}`}><ArrowUp size={13} /></button>
+                    <button onClick={() => handleMoveGroup(group.id, 'down')} disabled={groupIndex === activeGroups.length - 1} className="rounded p-0.5 text-slate-400 hover:text-blue-500 disabled:opacity-25" aria-label={`下移 ${group.name}`}><ArrowDown size={13} /></button>
+                  </div>
                   <Icon name={group.icon || 'Folder'} size={16} />
                   {editingGroupId === group.id ? (
                     <input value={editGroupName} onChange={(event) => setEditGroupName(event.target.value)} className="flex-1 rounded border border-blue-500 px-2 py-1 text-sm dark:bg-slate-800 dark:text-white" />
@@ -245,12 +269,16 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
           <section className="space-y-3">
             <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-200">分类列表</h4>
             <div className="space-y-2">
-              {activeCategories.map((cat, index) => (
+              {activeCategories.map(cat => {
+                const currentGroupId = cat.groupId || DEFAULT_CATEGORY_GROUP_ID;
+                const siblings = activeCategories.filter(category => (category.groupId || DEFAULT_CATEGORY_GROUP_ID) === currentGroupId);
+                const siblingIndex = siblings.findIndex(category => category.id === cat.id);
+                return (
                 <div key={cat.id} className="flex flex-col p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg group gap-2">
                   <div className="flex items-center gap-2">
                     <div className="flex flex-col gap-1 mr-2">
-                      <button onClick={() => handleMove(index, 'up')} disabled={index === 0} className="p-0.5 text-slate-400 hover:text-blue-500 disabled:opacity-30"><ArrowUp size={14} /></button>
-                      <button onClick={() => handleMove(index, 'down')} disabled={index === activeCategories.length - 1} className="p-0.5 text-slate-400 hover:text-blue-500 disabled:opacity-30"><ArrowDown size={14} /></button>
+                      <button onClick={() => handleMove(cat.id, 'up')} disabled={siblingIndex === 0} className="p-0.5 text-slate-400 hover:text-blue-500 disabled:opacity-30" aria-label={`上移 ${cat.name}`}><ArrowUp size={14} /></button>
+                      <button onClick={() => handleMove(cat.id, 'down')} disabled={siblingIndex === siblings.length - 1} className="p-0.5 text-slate-400 hover:text-blue-500 disabled:opacity-30" aria-label={`下移 ${cat.name}`}><ArrowDown size={14} /></button>
                     </div>
 
                     <div className="flex-1">
@@ -292,7 +320,8 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         </div>
