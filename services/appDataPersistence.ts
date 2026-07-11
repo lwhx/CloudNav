@@ -10,6 +10,7 @@ import {
   INITIAL_LINKS,
   LinkItem,
 } from '../types';
+import { normalizeWebUrl } from './urlSafety';
 
 export const LOCAL_STORAGE_KEY = 'cloudnav_data_cache';
 export const LOCAL_BACKUPS_KEY = 'cloudnav_data_backups';
@@ -81,11 +82,17 @@ export const normalizeAppData = (payload: Partial<AppDataPayload> | null | undef
   const linksSource = Array.isArray(payload?.links) ? payload!.links : INITIAL_LINKS;
   const links = linksSource
     .filter(link => !isExpiredTrash(link.deletedAt))
-    .map(link => ({
-      ...link,
-      tags: normalizeTags(link.tags),
-      categoryId: validCategoryIds.has(link.categoryId) || link.deletedAt ? link.categoryId : 'common',
-    }));
+    .map(link => {
+      const safeUrl = normalizeWebUrl(link.url);
+      if (!safeUrl && !link.deletedAt) return null;
+      return {
+        ...link,
+        url: safeUrl || link.url,
+        tags: normalizeTags(link.tags),
+        categoryId: validCategoryIds.has(link.categoryId) || link.deletedAt ? link.categoryId : 'common',
+      };
+    })
+    .filter(Boolean) as LinkItem[];
 
   return {
     links,

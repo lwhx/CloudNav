@@ -1,5 +1,6 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { Pin } from 'lucide-react';
 import { LinkItem, SiteSettings } from '../../types';
 
 interface SortableLinkCardProps {
@@ -50,11 +51,12 @@ const SortableLinkCard = ({ link, siteSettings, isSortingMode, isSortingPinned }
           }`}>
             {link.icon ? <img src={link.icon} alt="" className="w-5 h-5"/> : link.title.charAt(0)}
           </div>
-          <h3 className={`text-slate-900 dark:text-slate-100 truncate overflow-hidden text-ellipsis ${
+          <h3 className={`min-w-0 flex-1 text-slate-900 dark:text-slate-100 truncate overflow-hidden text-ellipsis ${
             isDetailedView ? 'text-base' : 'text-sm font-medium text-slate-800 dark:text-slate-200'
           }`} title={link.title}>
             {link.title}
           </h3>
+          {link.pinned && <Pin size={12} fill="currentColor" className="shrink-0 text-amber-500" aria-label="置顶链接" />}
         </div>
         {isDetailedView && link.description && (
           <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed line-clamp-2">

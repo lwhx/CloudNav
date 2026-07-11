@@ -1,5 +1,5 @@
 import type React from 'react';
-import { Settings } from 'lucide-react';
+import { Pin, Settings } from 'lucide-react';
 import { LinkItem, SiteSettings } from '../../types';
 
 interface LinkCardProps {
@@ -48,11 +48,12 @@ const LinkCard = ({
         }`}>
           {link.icon ? <img src={link.icon} alt="" className="w-5 h-5"/> : link.title.charAt(0)}
         </div>
-        <h3 className={`truncate overflow-hidden text-ellipsis ${
+        <h3 className={`min-w-0 flex-1 truncate overflow-hidden text-ellipsis ${
           isDetailedView ? 'text-base text-slate-900 dark:text-slate-100' : 'text-sm font-medium text-slate-800 dark:text-slate-200'
         }`} title={link.title}>
           {link.title}
         </h3>
+        {link.pinned && <Pin size={12} fill="currentColor" className="shrink-0 text-amber-500" aria-label="置顶链接" />}
       </div>
       {isDetailedView && link.description && (
         <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed line-clamp-2">
@@ -65,14 +66,14 @@ const LinkCard = ({
 
   return (
     <div
-      className={`group relative transition-all duration-200 hover:shadow-lg hover:shadow-blue-100/50 dark:hover:shadow-blue-900/20 ${
+      className={`group relative min-w-0 max-w-full overflow-hidden transition-all duration-200 hover:shadow-lg hover:shadow-blue-100/50 dark:hover:shadow-blue-900/20 ${
         isSelected
           ? 'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800'
           : 'bg-white dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 border-slate-200 dark:border-slate-700'
       } ${isBatchEditMode ? 'cursor-pointer' : ''} ${
         isDetailedView
-          ? 'flex flex-col rounded-2xl border shadow-sm p-4 min-h-[100px] hover:border-blue-400 dark:hover:border-blue-500'
-          : 'flex min-h-[72px] flex-col justify-center rounded-xl border shadow-sm p-3 hover:border-blue-300 dark:hover:border-blue-600'
+          ? 'flex flex-col rounded-xl border shadow-sm p-3.5 min-h-[92px] hover:-translate-y-0.5 hover:border-blue-400 dark:hover:border-blue-500'
+          : 'flex min-h-[64px] flex-col justify-center rounded-lg border shadow-sm p-2.5 hover:-translate-y-0.5 hover:border-blue-300 dark:hover:border-blue-600'
       }`}
       onClick={() => isBatchEditMode && onToggleSelection(link.id)}
       onContextMenu={(event) => onContextMenu(event, link)}

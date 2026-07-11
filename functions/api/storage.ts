@@ -5,8 +5,13 @@ import {
   FAVICON_CACHE_TTL_SECONDS,
   FAVICON_FAILURE_CACHE_TTL_SECONDS,
   FAVICON_RATE_LIMIT_PER_WINDOW,
+  createCategoryUnlockToken,
+  clearQuickAddInbox,
   createSession,
+  getAuthorizedCategoryIds,
   getCorsHeaders,
+  getLockedCategoryIds,
+  mergeQuickAddInbox,
   getWebsiteConfig,
   validateSessionToken,
   METADATA_RATE_LIMIT_PER_WINDOW,
@@ -14,6 +19,7 @@ import {
   isRateLimited,
   normalizeDomain,
   validateAuth,
+  verifyCategoryPassword,
 } from './storage-shared';
 import { fetchPageTitle, fetchPageMeta } from './storage-metadata';
 import { fetchAndEncodeFavicon, fetchAndEncodeImage, isSafeDataIcon } from './storage-favicon';
@@ -196,26 +202,19 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
       }
     }
 
-    if (!data) {
-      return new Response(JSON.stringify({ links: [], categories: [] }), {
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
-      });
+    const basePayload = data ? JSON.parse(data) : { links: [], categories: [], categoryGroups: [] };
+    const inboxMerge = await mergeQuickAddInbox(env, basePayload);
+    const resolvedPayload = inboxMerge.payload;
+    if (inboxMerge.consumedKeys.length > 0) {
+      await env.CLOUDNAV_KV.put('app_data', JSON.stringify({ ...resolvedPayload, updatedAt: Date.now() }));
+      await clearQuickAddInbox(env, inboxMerge.consumedKeys);
     }
 
-    // 分类锁服务端化：受密码保护（含哈希+盐）的分类，其链接默认不返回，
-    // 除非客户端通过 x-unlocked-categories 头声明已解锁该分类。
-    // 无 passwordSalt 的遗留分类（明文密码）保持旧行为，避免破坏现有数据。
+    // 受锁分类默认不返回链接；只有服务端签发且仍有效的解锁令牌可以授权读取。
     try {
-      const parsed = JSON.parse(data);
-      const unlockedHeader = request.headers.get('x-unlocked-categories') || '';
-      const unlockedIds = new Set(
-        unlockedHeader.split(',').map(s => s.trim()).filter(Boolean)
-      );
-      const lockedCategoryIds = new Set(
-        (parsed.categories || [])
-          .filter((cat: { password?: string; passwordSalt?: string; deletedAt?: number; id: string }) => cat && cat.password && cat.passwordSalt && !cat.deletedAt)
-          .map((cat: { id: string }) => cat.id)
-      );
+      const parsed = resolvedPayload;
+      const unlockedIds = await getAuthorizedCategoryIds(request, env);
+      const lockedCategoryIds = getLockedCategoryIds(parsed.categories);
       if (lockedCategoryIds.size > 0) {
         const filteredLinks = (parsed.links || []).filter((link: { deletedAt?: number; categoryId?: string }) => {
           if (!link || link.deletedAt) return true; // 软删除链接照常返回（合并逻辑需要）
@@ -232,7 +231,7 @@ export const onRequestGet = async (context: { env: Env; request: Request }) => {
       // 解析失败则返回原始 blob，保证可用性。
     }
 
-    return new Response(data, {
+    return new Response(JSON.stringify(resolvedPayload), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   } catch {
@@ -250,6 +249,26 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
 
   try {
     const body = await request.json();
+
+    if (body.unlockCategory) {
+      if (await isRateLimited(env, request, 'category-unlock', 10)) return buildRateLimitResponse(corsHeaders);
+      const data = await env.CLOUDNAV_KV.get('app_data');
+      if (!data || typeof body.categoryId !== 'string' || typeof body.password !== 'string') {
+        return new Response(JSON.stringify({ error: 'Invalid category unlock request' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+      }
+      let parsed: { categories?: { id: string; password?: string; passwordSalt?: string; deletedAt?: number }[] };
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        return new Response(JSON.stringify({ error: 'Stored app data is invalid' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+      }
+      const category = (parsed.categories || []).find((item: { id?: string; deletedAt?: number }) => item?.id === body.categoryId && !item.deletedAt);
+      if (!category || !await verifyCategoryPassword(body.password, category.password, category.passwordSalt)) {
+        return buildUnauthorizedResponse('分类密码错误', corsHeaders);
+      }
+      const unlock = await createCategoryUnlockToken(env, category.id);
+      return new Response(JSON.stringify(unlock), { headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+    }
 
     if (body.authOnly) {
       // authOnly 兼具"首次登录"和"会话续期校验"两种用途。
@@ -392,7 +411,9 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
       });
     }
 
-    await env.CLOUDNAV_KV.put('app_data', JSON.stringify(body));
+    const inboxMerge = await mergeQuickAddInbox(env, body);
+    await env.CLOUDNAV_KV.put('app_data', JSON.stringify(inboxMerge.payload));
+    if (inboxMerge.consumedKeys.length > 0) await clearQuickAddInbox(env, inboxMerge.consumedKeys);
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders },

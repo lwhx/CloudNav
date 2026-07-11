@@ -164,3 +164,19 @@ test('merged envelope updatedAt = max of both sides', () => {
   });
   assert.equal(merged.updatedAt, now + 100);
 });
+
+test('newer category edit wins by record updatedAt', () => {
+  const merged = mergeAppData({
+    local: { categories: [{ id: 'cat', name: '新的名称', icon: 'Folder', updatedAt: 200 }] },
+    cloud: { categories: [{ id: 'cat', name: '旧的名称', icon: 'Folder', updatedAt: 100 }] },
+  });
+  assert.equal(merged.categories.find(category => category.id === 'cat')?.name, '新的名称');
+});
+
+test('newer category group edit wins by record updatedAt', () => {
+  const merged = mergeAppData({
+    local: { categoryGroups: [{ id: 'group', name: '新分组', updatedAt: 300 }] },
+    cloud: { categoryGroups: [{ id: 'group', name: '旧分组', updatedAt: 100 }] },
+  });
+  assert.equal(merged.categoryGroups?.find(group => group.id === 'group')?.name, '新分组');
+});

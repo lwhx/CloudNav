@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { clearAllUnlocked, getUnlockedCategoriesHeader } from '../services/categoryUnlockRegistry';
+import { clearAllUnlocked, getCategoryUnlockTokensHeader } from '../services/categoryUnlockRegistry';
 
 const AUTH_KEY = 'cloudnav_auth_token';
 const AUTH_TIME_KEY = 'lastLoginTime';
@@ -23,9 +23,9 @@ export const useAuthSession = () => {
       headers['x-auth-issued-at'] = authIssuedAt;
     }
     // 附带当前会话内已解锁的分类，使服务端 GET 返回这些受锁分类的链接（#11）。
-    const unlockedHeader = getUnlockedCategoriesHeader();
-    if (unlockedHeader) {
-      headers['x-unlocked-categories'] = unlockedHeader;
+    const unlockTokens = getCategoryUnlockTokensHeader();
+    if (unlockTokens) {
+      headers['x-category-unlock-tokens'] = unlockTokens;
     }
 
     return headers;

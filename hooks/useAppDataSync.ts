@@ -29,6 +29,21 @@ type PendingSyncPayload = {
   token: string;
 };
 
+const comparableRecord = <T extends { updatedAt?: number }>(record: T) => {
+  const { updatedAt: _updatedAt, ...rest } = record;
+  return JSON.stringify(rest);
+};
+
+const stampChangedRecords = <T extends { id: string; updatedAt?: number; createdAt?: number }>(current: T[], incoming: T[], now: number) => {
+  const currentById = new Map(current.map(record => [record.id, record]));
+  return incoming.map(record => {
+    const previous = currentById.get(record.id);
+    if (!previous) return { ...record, updatedAt: record.updatedAt || record.createdAt || now };
+    if (comparableRecord(previous) === comparableRecord(record)) return record;
+    return { ...record, updatedAt: now };
+  });
+};
+
 export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onSyncError, onSyncOffline, onSyncRetrying, onSyncGiveUp }: UseAppDataSyncOptions) => {
   const [links, setLinks] = useState<LinkItem[]>([]);
   // 镜像最新 links，供异步回调（如 loadLinkIcons）读取当前 state，
@@ -184,7 +199,12 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
   }, [flushSyncQueue]);
 
   const updateData = useCallback((newLinks: LinkItem[], newCategories: Category[], newCategoryGroups?: CategoryGroup[]) => {
-    const normalized = applyData(newLinks, newCategories, newCategoryGroups);
+    const now = Date.now();
+    const stampedLinks = stampChangedRecords(links, newLinks, now);
+    const stampedCategories = stampChangedRecords(categories, newCategories, now);
+    const nextGroups = newCategoryGroups || categoryGroups;
+    const stampedGroups = stampChangedRecords(categoryGroups, nextGroups, now);
+    const normalized = applyData(stampedLinks, stampedCategories, stampedGroups);
     const normalizedGroups = normalized.categoryGroups || [DEFAULT_CATEGORY_GROUP];
     saveLocalAppData(normalized.links, normalized.categories, normalizedGroups);
 
@@ -195,7 +215,7 @@ export const useAppDataSync = ({ authToken, buildAuthHeaders, onAuthExpired, onS
       setSyncStatus('offline');
       onSyncOffline?.();
     }
-  }, [applyData, authToken, onSyncOffline, scheduleSync]);
+  }, [applyData, authToken, categories, categoryGroups, links, onSyncOffline, scheduleSync]);
 
   const loadLinkIcons = useCallback(async (linksToLoad: LinkItem[], categoriesToUse: Category[], token?: string) => {
     const activeToken = token || authToken;

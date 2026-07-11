@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
 import { Lock, ArrowRight, X } from 'lucide-react';
 import { Category } from '../types';
-import { verifyCategoryPassword } from '../services/categoryCrypto';
 
 interface CategoryAuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   category: Category | null;
-  onUnlock: (categoryId: string) => void;
+  onUnlock: (categoryId: string, password: string) => Promise<boolean>;
 }
 
 const CategoryAuthModal: React.FC<CategoryAuthModalProps> = ({ isOpen, onClose, category, onUnlock }) => {
@@ -24,10 +23,8 @@ const CategoryAuthModal: React.FC<CategoryAuthModalProps> = ({ isOpen, onClose, 
     if (!category) return;
     setIsVerifying(true);
     try {
-      // category.password 现在是 PBKDF2 哈希；用盐对输入重新派生后恒定时间比较。
-      const ok = await verifyCategoryPassword(password, category.password || '', category.passwordSalt || '');
+      const ok = await onUnlock(category.id, password);
       if (ok) {
-        onUnlock(category.id);
         setPassword('');
         setError('');
         onClose();

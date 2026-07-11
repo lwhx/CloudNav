@@ -3,6 +3,8 @@ import { DragEndEvent, KeyboardSensor, PointerSensor, useSensor, useSensors } fr
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { Category, LinkItem } from '../types';
 import { normalizeTags } from '../services/appDataPersistence';
+import { reorderCategoryLinks } from '../services/linkOrdering';
+import { normalizeWebUrl } from '../services/urlSafety';
 
 interface UseLinkOrganizerOptions {
   links: LinkItem[];
@@ -50,6 +52,11 @@ export const useLinkOrganizer = ({
     setIsBatchEditMode(prev => !prev);
     setSelectedLinks(new Set());
   }, [requireAuth]);
+
+  const closeBatchEditMode = useCallback(() => {
+    setIsBatchEditMode(false);
+    setSelectedLinks(new Set());
+  }, []);
 
   const toggleLinkSelection = useCallback((linkId: string) => {
     setSelectedLinks(prev => {
@@ -113,9 +120,10 @@ export const useLinkOrganizer = ({
   }, [displayedLinks, selectedLinks]);
 
   const handleAddLink = useCallback((data: Omit<LinkItem, 'id' | 'createdAt'>) => {
-    let processedUrl = data.url;
-    if (processedUrl && !processedUrl.startsWith('http://') && !processedUrl.startsWith('https://')) {
-      processedUrl = 'https://' + processedUrl;
+    const processedUrl = normalizeWebUrl(data.url);
+    if (!processedUrl) {
+      showToast('链接地址无效，仅支持 http 或 https', 'warning');
+      return;
     }
 
     const categoryLinks = links.filter(link =>
@@ -162,7 +170,7 @@ export const useLinkOrganizer = ({
       setSelectedCategory(newLink.categoryId);
     }
     setPrefillLink(undefined);
-  }, [categories, links, selectedCategory, setPrefillLink, setSelectedCategory, updateData]);
+  }, [categories, links, selectedCategory, setPrefillLink, setSelectedCategory, showToast, updateData]);
 
   const handleEditLink = useCallback((data: Omit<LinkItem, 'id' | 'createdAt'>) => {
     if (!authToken) {
@@ -171,9 +179,10 @@ export const useLinkOrganizer = ({
     }
     if (!editingLink) return;
 
-    let processedUrl = data.url;
-    if (processedUrl && !processedUrl.startsWith('http://') && !processedUrl.startsWith('https://')) {
-      processedUrl = 'https://' + processedUrl;
+    const processedUrl = normalizeWebUrl(data.url);
+    if (!processedUrl) {
+      showToast('链接地址无效，仅支持 http 或 https', 'warning');
+      return;
     }
 
     const updated = links.map(l => l.id === editingLink.id ? { ...l, ...data, url: processedUrl, tags: normalizeTags(data.tags) } : l);
@@ -182,31 +191,15 @@ export const useLinkOrganizer = ({
       setSelectedCategory(data.categoryId);
     }
     setEditingLink(undefined);
-  }, [authToken, categories, editingLink, links, selectedCategory, setEditingLink, setIsAuthOpen, setSelectedCategory, updateData]);
+  }, [authToken, categories, editingLink, links, selectedCategory, setEditingLink, setIsAuthOpen, setSelectedCategory, showToast, updateData]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
 
     if (over && active.id !== over.id) {
-      const categoryLinks = links.filter(link =>
-        selectedCategory === 'all' || link.categoryId === selectedCategory,
-      );
-      const activeIndex = categoryLinks.findIndex(link => link.id === active.id);
-      const overIndex = categoryLinks.findIndex(link => link.id === over.id);
-
-      if (activeIndex !== -1 && overIndex !== -1) {
-        const reorderedCategoryLinks = arrayMove<LinkItem>(categoryLinks, activeIndex, overIndex);
-        const updatedLinks = links.map(link => {
-          const reorderedIndex = reorderedCategoryLinks.findIndex(l => l.id === link.id);
-          if (reorderedIndex !== -1) {
-            return { ...link, order: reorderedIndex };
-          }
-          return link;
-        });
-
-        updatedLinks.sort((a, b) => (a.order || 0) - (b.order || 0));
-        updateData(updatedLinks, categories);
-      }
+      if (selectedCategory === 'all') return;
+      const updatedLinks = reorderCategoryLinks(links, selectedCategory, String(active.id), String(over.id));
+      if (updatedLinks !== links) updateData(updatedLinks, categories);
     }
   }, [categories, links, selectedCategory, updateData]);
 
@@ -341,6 +334,7 @@ export const useLinkOrganizer = ({
     isBatchEditMode,
     selectedLinks,
     toggleBatchEditMode,
+    closeBatchEditMode,
     toggleLinkSelection,
     handleBatchDelete,
     handleBatchMove,

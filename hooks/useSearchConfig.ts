@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ExternalSearchSource, SearchConfig, SearchMode } from '../types';
+import { buildSafeSearchUrl, normalizeWebUrl } from '../services/urlSafety';
 
 interface UseSearchConfigOptions {
   authToken: string;
@@ -91,16 +92,21 @@ export const useSearchConfig = ({ authToken, buildAuthHeaders, requireAuth, sear
     selectedSource?: ExternalSearchSource | null,
     persistToCloud: boolean = true,
   ) => {
+    const safeSources = sources.filter(source => !!normalizeWebUrl(source.url.replace('{query}', 'test')));
+    const resolvedSelectedSource = selectedSource !== undefined ? selectedSource : selectedSearchSource;
+    const safeSelectedSource = resolvedSelectedSource && safeSources.some(source => source.id === resolvedSelectedSource.id)
+      ? resolvedSelectedSource
+      : null;
     const searchConfig: SearchConfig = {
       mode,
-      externalSources: sources,
-      selectedSource: selectedSource !== undefined ? selectedSource : selectedSearchSource,
+      externalSources: safeSources,
+      selectedSource: safeSelectedSource,
     };
 
-    setExternalSearchSources(sources);
+    setExternalSearchSources(safeSources);
     setSearchMode(mode);
     if (selectedSource !== undefined) {
-      setSelectedSearchSource(selectedSource);
+      setSelectedSearchSource(safeSelectedSource);
     }
 
     if (!persistToCloud || !authToken) {
@@ -132,8 +138,8 @@ export const useSearchConfig = ({ authToken, buildAuthHeaders, requireAuth, sear
     await handleSaveSearchConfig(externalSearchSources, searchMode, source);
 
     if (searchQuery.trim()) {
-      const searchUrl = source.url.replace('{query}', encodeURIComponent(searchQuery));
-      window.open(searchUrl, '_blank');
+      const searchUrl = buildSafeSearchUrl(source.url, searchQuery);
+      if (searchUrl) window.open(searchUrl, '_blank', 'noopener,noreferrer');
     }
     setShowSearchSourcePopup(false);
     setHoveredSearchSource(null);
@@ -165,8 +171,8 @@ export const useSearchConfig = ({ authToken, buildAuthHeaders, requireAuth, sear
     if (externalSearchSources.length === 0) {
       const defaultSources = createDefaultSearchSources();
       handleSaveSearchConfig(defaultSources, 'external');
-      const searchUrl = defaultSources[0].url.replace('{query}', encodeURIComponent(searchQuery));
-      window.open(searchUrl, '_blank');
+      const searchUrl = buildSafeSearchUrl(defaultSources[0].url, searchQuery);
+      if (searchUrl) window.open(searchUrl, '_blank', 'noopener,noreferrer');
       return;
     }
 
@@ -179,8 +185,8 @@ export const useSearchConfig = ({ authToken, buildAuthHeaders, requireAuth, sear
     }
 
     if (source) {
-      const searchUrl = source.url.replace('{query}', encodeURIComponent(searchQuery));
-      window.open(searchUrl, '_blank');
+      const searchUrl = buildSafeSearchUrl(source.url, searchQuery);
+      if (searchUrl) window.open(searchUrl, '_blank', 'noopener,noreferrer');
     }
   }, [externalSearchSources, handleSaveSearchConfig, searchMode, searchQuery, selectedSearchSource]);
 

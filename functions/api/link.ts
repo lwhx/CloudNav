@@ -1,5 +1,6 @@
-import { APP_DATA_VERSION, Category, LinkItem } from '../../types';
-import { buildRateLimitResponse, Env, getCorsHeaders, isRateLimited, validateAuth } from './storage-shared';
+import { Category, CategoryGroup, LinkItem } from '../../types';
+import { normalizeWebUrl } from '../../services/urlSafety';
+import { buildRateLimitResponse, enqueueQuickAddLink, Env, getCorsHeaders, isRateLimited, validateAuth } from './storage-shared';
 
 interface QuickAddLinkRequest {
   title?: string;
@@ -12,6 +13,7 @@ interface QuickAddLinkRequest {
 interface StoredAppData {
   links: LinkItem[];
   categories: Category[];
+  categoryGroups?: CategoryGroup[];
   version?: number;
   updatedAt?: number;
 }
@@ -41,6 +43,9 @@ const readStoredAppData = async (env: Env): Promise<StoredAppData> => {
   return {
     links: Array.isArray(parsedData.links) ? parsedData.links : [],
     categories: Array.isArray(parsedData.categories) ? parsedData.categories : [],
+    categoryGroups: Array.isArray(parsedData.categoryGroups) ? parsedData.categoryGroups : undefined,
+    version: parsedData.version,
+    updatedAt: parsedData.updatedAt,
   };
 };
 
@@ -129,6 +134,8 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
     if (!newLinkData.title || !newLinkData.url) {
       return buildJsonResponse({ error: 'Missing title or url' }, corsHeaders, 400);
     }
+    const safeUrl = normalizeWebUrl(newLinkData.url);
+    if (!safeUrl) return buildJsonResponse({ error: 'Only http and https URLs are allowed' }, corsHeaders, 400);
 
     const currentData = await readStoredAppData(env);
     const targetCategory = findTargetCategory(currentData.categories, newLinkData.categoryId);
@@ -137,7 +144,8 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
       // 用 UUID 避免同毫秒快速添加时的 id 碰撞
       id: crypto.randomUUID(),
       title: newLinkData.title,
-      url: newLinkData.url,
+      url: safeUrl,
+      updatedAt: createdAt,
       description: newLinkData.description || '',
       categoryId: targetCategory.id,
       createdAt,
@@ -145,14 +153,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }) => 
       icon: newLinkData.icon || undefined,
     };
 
-    const nextData: StoredAppData = {
-      ...currentData,
-      links: [newLink, ...currentData.links],
-      version: APP_DATA_VERSION,
-      updatedAt: createdAt,
-    };
-
-    await env.CLOUDNAV_KV.put('app_data', JSON.stringify(nextData));
+    await enqueueQuickAddLink(env, newLink);
 
     return buildJsonResponse({
       success: true,

@@ -22,6 +22,7 @@ export interface Category {
   groupId?: string;
   password?: string; // 分类密码的 PBKDF2 哈希（hex），明文不入库
   passwordSalt?: string; // 哈希所用盐（hex）
+  updatedAt?: number;
   deletedAt?: number;
 }
 
@@ -31,6 +32,7 @@ export interface CategoryGroup {
   name: string;
   icon?: string;
   order?: number;
+  updatedAt?: number;
   deletedAt?: number;
 }
 

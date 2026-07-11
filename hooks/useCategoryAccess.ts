@@ -11,6 +11,7 @@ interface UseCategoryAccessOptions {
   buildAuthHeaders: (token?: string | null, extraHeaders?: Record<string, string>) => Record<string, string>;
   setSelectedCategory: (categoryId: string) => void;
   setSidebarOpen: (open: boolean) => void;
+  onUnlocked?: () => Promise<void>;
 }
 
 export const useCategoryAccess = ({
@@ -22,6 +23,7 @@ export const useCategoryAccess = ({
   buildAuthHeaders,
   setSelectedCategory,
   setSidebarOpen,
+  onUnlocked,
 }: UseCategoryAccessOptions) => {
   const [unlockedCategoryIds, setUnlockedCategoryIds] = useState<Set<string>>(new Set());
   const [catAuthModalData, setCatAuthModalData] = useState<Category | null>(null);
@@ -47,11 +49,25 @@ export const useCategoryAccess = ({
     setSidebarOpen(false);
   }, [setSelectedCategory, setSidebarOpen, unlockedCategoryIds]);
 
-  const handleUnlockCategory = useCallback((catId: string) => {
-    setUnlockedCategoryIds(prev => new Set(prev).add(catId));
-    registerUnlockedCategory(catId); // 同步到注册表，供请求头使用
-    setSelectedCategory(catId);
-  }, [setSelectedCategory]);
+  const handleUnlockCategory = useCallback(async (catId: string, password: string) => {
+    try {
+      const response = await fetch('/api/storage', {
+        method: 'POST',
+        headers: buildAuthHeaders(undefined, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ unlockCategory: true, categoryId: catId, password }),
+      });
+      if (!response.ok) return false;
+      const payload = await response.json() as { token?: string };
+      if (!payload.token) return false;
+      registerUnlockedCategory(catId, payload.token);
+      setUnlockedCategoryIds(prev => new Set(prev).add(catId));
+      setSelectedCategory(catId);
+      await onUnlocked?.();
+      return true;
+    } catch {
+      return false;
+    }
+  }, [buildAuthHeaders, onUnlocked, setSelectedCategory]);
 
   const handleUpdateCategories = useCallback((newCats: Category[]) => {
     if (!requireAuth()) return;

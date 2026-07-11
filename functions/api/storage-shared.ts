@@ -8,6 +8,45 @@ interface KVNamespace {
   list(options?: { prefix?: string; limit?: number; cursor?: string }): Promise<{ keys: { name: string }[]; list_complete: boolean; cursor?: string }>;
 }
 
+const QUICK_ADD_PREFIX = 'quick-add:';
+
+export const enqueueQuickAddLink = async (env: Env, link: unknown) => {
+  const id = typeof link === 'object' && link && 'id' in link ? String((link as { id: unknown }).id) : crypto.randomUUID();
+  await env.CLOUDNAV_KV.put(`${QUICK_ADD_PREFIX}${Date.now()}:${id}`, JSON.stringify(link), { expirationTtl: 7 * 24 * 60 * 60 });
+};
+
+export const readQuickAddInbox = async (env: Env) => {
+  const entries: { key: string; link: unknown }[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await env.CLOUDNAV_KV.list({ prefix: QUICK_ADD_PREFIX, limit: 100, cursor });
+    const values = await Promise.all(page.keys.map(async key => ({ key: key.name, raw: await env.CLOUDNAV_KV.get(key.name) })));
+    values.forEach(({ key, raw }) => {
+      if (!raw) return;
+      try { entries.push({ key, link: JSON.parse(raw) }); } catch { /* ignore malformed inbox item */ }
+    });
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  return entries;
+};
+
+export const clearQuickAddInbox = async (env: Env, keys: string[]) => {
+  await Promise.all(keys.map(key => env.CLOUDNAV_KV.delete(key)));
+};
+
+export const mergeQuickAddInbox = async <T extends { links?: { id?: string }[] }>(env: Env, payload: T) => {
+  const entries = await readQuickAddInbox(env);
+  const linkById = new Map((Array.isArray(payload.links) ? payload.links : []).filter(link => link?.id).map(link => [link.id!, link]));
+  const consumedKeys: string[] = [];
+  entries.forEach(entry => {
+    const link = entry.link as { id?: string };
+    if (!link?.id) return;
+    linkById.set(link.id, link);
+    consumedKeys.push(entry.key);
+  });
+  return { payload: { ...payload, links: Array.from(linkById.values()) } as T & { links: { id?: string }[] }, consumedKeys };
+};
+
 export interface Env {
   CLOUDNAV_KV: KVNamespace;
   PASSWORD: string;
@@ -31,6 +70,7 @@ export interface WebsiteConfig {
 }
 
 export const AUTH_TIME_HEADER = 'x-auth-issued-at';
+export const CATEGORY_UNLOCK_HEADER = 'x-category-unlock-tokens';
 export const METADATA_CACHE_TTL_SECONDS = 24 * 60 * 60;
 export const FAVICON_CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
 export const FAVICON_FAILURE_CACHE_TTL_SECONDS = 10 * 60;
@@ -94,7 +134,7 @@ export const getCorsHeaders = async (request: Request, env?: Env) => {
 
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 
-    'Access-Control-Allow-Headers': `Content-Type, Authorization, x-auth-password, x-unlocked-categories, ${AUTH_TIME_HEADER}`,
+    'Access-Control-Allow-Headers': `Content-Type, Authorization, x-auth-password, ${CATEGORY_UNLOCK_HEADER}, ${AUTH_TIME_HEADER}`,
 
     'Vary': 'Origin',
 
@@ -130,6 +170,13 @@ const timingSafeEqualString = (a: string, b: string) => {
 const SESSION_TOKEN_BYTES = 32;
 const SESSION_KV_PREFIX = 'session:';
 const SESSION_PERMANENT_TTL_SECONDS = 90 * 24 * 60 * 60;
+const CATEGORY_UNLOCK_TOKEN_BYTES = 32;
+const CATEGORY_UNLOCK_KV_PREFIX = 'categoryUnlock:';
+const CATEGORY_UNLOCK_TTL_SECONDS = 12 * 60 * 60;
+const MAX_CATEGORY_UNLOCK_TOKENS = 30;
+const PBKDF2_ITERATIONS = 100_000;
+const KEY_HASH_LENGTH = 32;
+const textEncoder = new TextEncoder();
 
 const toHex = (bytes: Uint8Array) => {
   let out = '';
@@ -137,11 +184,24 @@ const toHex = (bytes: Uint8Array) => {
   return out;
 };
 
+const fromHex = (hex: string) => {
+  if (!/^[0-9a-f]+$/i.test(hex) || hex.length % 2 !== 0) {
+    throw new Error('Invalid hex value');
+  }
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return bytes;
+};
+
+const createRandomHexToken = (bytesLength: number) => {
+  const randomBytes = new Uint8Array(bytesLength);
+  crypto.getRandomValues(randomBytes);
+  return toHex(randomBytes);
+};
+
 // 签发新会话令牌并写入 KV。返回 { token, createdAt }。
 export const createSession = async (env: Env, expiryDays: number) => {
-  const randomBytes = new Uint8Array(SESSION_TOKEN_BYTES);
-  crypto.getRandomValues(randomBytes);
-  const token = toHex(randomBytes);
+  const token = createRandomHexToken(SESSION_TOKEN_BYTES);
   const createdAt = Date.now();
   const ttlSeconds = expiryDays > 0
     ? expiryDays * 24 * 60 * 60
@@ -171,6 +231,80 @@ export const validateSessionToken = async (env: Env, token: string, expiryDays: 
     return { valid: false, createdAt: 0 };
   }
 };
+
+export interface LockedCategoryRecord {
+  id: string;
+  password?: string;
+  passwordSalt?: string;
+  deletedAt?: number;
+}
+
+export const verifyCategoryPassword = async (
+  password: string,
+  storedHashHex: string | undefined,
+  saltHex: string | undefined,
+) => {
+  if (!password || !storedHashHex || !saltHex) return false;
+  try {
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw',
+      textEncoder.encode(password),
+      { name: 'PBKDF2' },
+      false,
+      ['deriveBits'],
+    );
+    const derived = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', salt: fromHex(saltHex), iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+      keyMaterial,
+      KEY_HASH_LENGTH * 8,
+    );
+    const candidate = toHex(new Uint8Array(derived));
+    if (candidate.length !== storedHashHex.length) return false;
+    return timingSafeEqualString(candidate, storedHashHex);
+  } catch {
+    return false;
+  }
+};
+
+export const createCategoryUnlockToken = async (env: Env, categoryId: string) => {
+  const token = createRandomHexToken(CATEGORY_UNLOCK_TOKEN_BYTES);
+  await env.CLOUDNAV_KV.put(
+    CATEGORY_UNLOCK_KV_PREFIX + token,
+    JSON.stringify({ categoryId, createdAt: Date.now() }),
+    { expirationTtl: CATEGORY_UNLOCK_TTL_SECONDS },
+  );
+  return { token, categoryId, expiresIn: CATEGORY_UNLOCK_TTL_SECONDS };
+};
+
+export const getAuthorizedCategoryIds = async (request: Request, env: Env) => {
+  const rawHeader = request.headers.get(CATEGORY_UNLOCK_HEADER) || '';
+  const tokens = rawHeader
+    .split(',')
+    .map(token => token.trim())
+    .filter(token => /^[0-9a-f]{64}$/i.test(token))
+    .slice(0, MAX_CATEGORY_UNLOCK_TOKENS);
+
+  const categoryIds = new Set<string>();
+  await Promise.all(tokens.map(async token => {
+    const raw = await env.CLOUDNAV_KV.get(CATEGORY_UNLOCK_KV_PREFIX + token);
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed.categoryId === 'string' && parsed.categoryId) {
+        categoryIds.add(parsed.categoryId);
+      }
+    } catch {
+      // Ignore malformed unlock token records.
+    }
+  }));
+  return categoryIds;
+};
+
+export const getLockedCategoryIds = (categories: LockedCategoryRecord[] | undefined) => new Set(
+  (Array.isArray(categories) ? categories : [])
+    .filter(cat => cat && cat.password && cat.passwordSalt && !cat.deletedAt)
+    .map(cat => cat.id)
+);
 
 export const buildUnauthorizedResponse = (message: string, corsHeaders: Record<string, string>) =>
   new Response(JSON.stringify({ error: message }), {

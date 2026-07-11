@@ -25,8 +25,11 @@ const linkMtime = (link: LinkItem): number => {
  * Categories/groups lack a dedicated mtime; treat the absence of `deletedAt` as
  * "alive" and use `deletedAt` as the deletion timestamp when present.
  */
-const entityMtime = (entity: { deletedAt?: number }): number => {
-  return typeof entity.deletedAt === 'number' && entity.deletedAt > 0 ? entity.deletedAt : 1;
+const entityMtime = (entity: { updatedAt?: number; deletedAt?: number }): number => {
+  return Math.max(
+    typeof entity.updatedAt === 'number' ? entity.updatedAt : 1,
+    typeof entity.deletedAt === 'number' ? entity.deletedAt : 0,
+  );
 };
 
 const isExpiredTrash = (deletedAt?: number) => {

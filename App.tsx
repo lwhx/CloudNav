@@ -1,18 +1,9 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-  Search, Plus, Upload, Moon, Sun, Menu, 
-  Trash2, Loader2, Cloud, CheckCircle2, AlertCircle,
-  Pin, Settings, Lock, CloudCog, GitFork, GripVertical, Save, CheckSquare, LogOut, ExternalLink, X, ChevronDown, ChevronRight, Tag, Bookmark
+  Search, Plus, Moon, Sun, Menu, Loader2, Cloud,
+  Settings, GitFork, LogOut, ExternalLink, X
 } from 'lucide-react';
-import {
-  DndContext,
-  closestCorners,
-} from '@dnd-kit/core';
-import {
-  SortableContext,
-  rectSortingStrategy,
-} from '@dnd-kit/sortable';
 import { LinkItem, Category, CategoryGroup, DEFAULT_CATEGORIES, DEFAULT_CATEGORY_GROUP, DEFAULT_CATEGORY_GROUP_ID, WebDavConfig, AIConfig, SearchConfig, AICategorySuggestion, SiteSettings } from './types';
 import Icon from './components/Icon';
 import LinkModal from './components/LinkModal';
@@ -39,8 +30,10 @@ import { useLinkOrganizer } from './hooks/useLinkOrganizer';
 import { fetchProtectedConfigsAfterLogin, useAppBootstrap } from './hooks/useAppBootstrap';
 import { saveLocalAppData, normalizeTags } from './services/appDataPersistence';
 import { getDefaultAIConfig, normalizeAIConfig } from './services/aiConfigService';
+import { sortCategoryLinks } from './services/linkOrdering';
 import LinkCard from './components/links/LinkCard';
-import SortableLinkCard from './components/links/SortableLinkCard';
+import GroupSidebar from './components/navigation/GroupSidebar';
+import CategorySection from './components/navigation/CategorySection';
 
 // --- 配置项 ---
 // 项目核心仓库地址
@@ -50,6 +43,7 @@ const AUTH_KEY = 'cloudnav_auth_token';
 const AUTH_TIME_KEY = 'lastLoginTime';
 const WEBDAV_CONFIG_KEY = 'cloudnav_webdav_config';
 const AI_CONFIG_KEY = 'cloudnav_ai_config';
+const ACTIVE_GROUP_KEY = 'cloudnav_active_group';
 
 const mergeCategoryGroups = (currentGroups: CategoryGroup[], incomingGroups: CategoryGroup[] = []) => {
   const map = new Map<string, CategoryGroup>();
@@ -119,6 +113,14 @@ function App() {
 
   // --- State ---
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [activeGroupId, setActiveGroupId] = useState(() => localStorage.getItem(ACTIVE_GROUP_KEY) || '');
+  const [activeAnchorId, setActiveAnchorId] = useState('');
+  const [managementMode, setManagementMode] = useState(false);
+  const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Set<string>>(new Set());
+  const [expandedCategoryIds, setExpandedCategoryIds] = useState<Set<string>>(new Set());
+  const contentScrollRef = useRef<HTMLDivElement>(null);
+  const browsingScrollTopRef = useRef(0);
+  const wasSearchingRef = useRef(false);
   const [searchInput, setSearchInput] = useState('');
   const searchQuery = useDebouncedValue(searchInput, 200);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -151,7 +153,6 @@ function App() {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isSearchConfigModalOpen, setIsSearchConfigModalOpen] = useState(false);
   const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
-  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(new Set());
   const [batchTagText, setBatchTagText] = useState('');
   const [editingLink, setEditingLink] = useState<LinkItem | undefined>(undefined);
   // State for data pre-filled from Bookmarklet
@@ -251,10 +252,8 @@ function App() {
   const openSearchConfigModal = () => openSearchConfigModalFromHook(() => setIsSearchConfigModalOpen(true));
 
   const {
-    unlockedCategoryIds,
     catAuthModalData,
     setCatAuthModalData,
-    handleCategoryClick,
     handleUnlockCategory,
     handleDeleteCategory,
     handleCategoryActionAuth,
@@ -268,6 +267,18 @@ function App() {
     buildAuthHeaders,
     setSelectedCategory,
     setSidebarOpen,
+    onUnlocked: async () => {
+      const response = await fetch('/api/storage', { headers: buildAuthHeaders() });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (Array.isArray(data.links)) setLinks(previous => {
+        const linkById = new Map(data.links.map((link: LinkItem) => [link.id, link]));
+        previous.forEach(link => linkById.set(link.id, link));
+        return Array.from(linkById.values());
+      });
+      if (Array.isArray(data.categories)) setCategories(data.categories);
+      if (Array.isArray(data.categoryGroups)) setCategoryGroups(data.categoryGroups);
+    },
   });
 
   // --- Effects ---
@@ -642,27 +653,92 @@ function App() {
 
   const groupedCategories = useMemo(() => buildGroupedCategories(categoryGroups, categories), [categoryGroups, categories]);
 
-  useEffect(() => {
-    if (selectedCategory === 'all') return;
-    const selected = categories.find(category => category.id === selectedCategory);
-    if (!selected) return;
-    const groupId = selected.groupId || DEFAULT_CATEGORY_GROUP_ID;
-    setCollapsedGroupIds(prev => {
-      if (!prev.has(groupId)) return prev;
-      const next = new Set(prev);
-      next.delete(groupId);
-      return next;
-    });
-  }, [categories, selectedCategory]);
+  const navigationGroups = useMemo(() => groupedCategories.map(group => {
+    const groupCategoryIds = new Set(group.categories.map(category => category.id));
+    const linkCount = links.filter(link => !link.deletedAt && groupCategoryIds.has(link.categoryId) && !isCategoryLocked(link.categoryId)).length;
+    return { ...group, categoryCount: group.categories.length, linkCount };
+  }).filter(group => group.categoryCount > 0), [groupedCategories, isCategoryLocked, links]);
 
-  const toggleGroupCollapse = (groupId: string) => {
-    setCollapsedGroupIds(prev => {
-      const next = new Set(prev);
-      if (next.has(groupId)) next.delete(groupId);
-      else next.add(groupId);
-      return next;
-    });
+  useEffect(() => {
+    const fallbackGroup = navigationGroups[0];
+    if (!fallbackGroup) return;
+    if (!navigationGroups.some(group => group.id === activeGroupId)) {
+      setActiveGroupId(fallbackGroup.id);
+      localStorage.setItem(ACTIVE_GROUP_KEY, fallbackGroup.id);
+    }
+  }, [activeGroupId, navigationGroups]);
+
+  const activeGroup = useMemo(() => navigationGroups.find(group => group.id === activeGroupId) || navigationGroups[0], [activeGroupId, navigationGroups]);
+  const activeGroupCategories = useMemo(() => activeGroup?.categories || [], [activeGroup]);
+
+  useEffect(() => {
+    if (!activeGroupCategories.length) {
+      setActiveAnchorId('');
+      return;
+    }
+    setActiveAnchorId(activeGroupCategories[0].id);
+    const root = contentScrollRef.current;
+    if (!root || searchQuery.trim()) return;
+    const sections = activeGroupCategories.map(category => document.getElementById(`category-${category.id}`)).filter((section): section is HTMLElement => !!section);
+    const observer = new IntersectionObserver(entries => {
+      const visible = entries.filter(entry => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+      if (visible) setActiveAnchorId((visible.target as HTMLElement).dataset.categorySection || '');
+    }, { root, rootMargin: '-120px 0px -65% 0px', threshold: [0, 0.1] });
+    sections.forEach(section => observer.observe(section));
+    return () => observer.disconnect();
+  }, [activeGroupId, activeGroupCategories, searchQuery]);
+
+  const selectGroup = (groupId: string) => {
+    setActiveGroupId(groupId);
+    localStorage.setItem(ACTIVE_GROUP_KEY, groupId);
+    setSidebarOpen(false);
+    setSelectedCategory('all');
+    setManagementMode(false);
+    closeBatchEditMode();
+    contentScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSidebarOpen(false);
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [sidebarOpen]);
+
+  const scrollToCategory = (categoryId: string) => {
+    setActiveAnchorId(categoryId);
+    document.getElementById(`category-${categoryId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  useEffect(() => {
+    const searching = !!searchQuery.trim();
+    const scrollContainer = contentScrollRef.current;
+    if (!scrollContainer) return;
+    if (searching && !wasSearchingRef.current) {
+      browsingScrollTopRef.current = scrollContainer.scrollTop;
+      scrollContainer.scrollTo({ top: 0 });
+    } else if (!searching && wasSearchingRef.current) {
+      window.requestAnimationFrame(() => contentScrollRef.current?.scrollTo({ top: browsingScrollTopRef.current }));
+    }
+    wasSearchingRef.current = searching;
+  }, [searchQuery]);
+
+  const toggleCategorySet = (setter: React.Dispatch<React.SetStateAction<Set<string>>>, categoryId: string) => setter(previous => {
+    const next = new Set(previous);
+    if (next.has(categoryId)) next.delete(categoryId);
+    else next.add(categoryId);
+    return next;
+  });
+
+  const linksByCategory = useMemo(() => {
+    const map = new Map<string, LinkItem[]>();
+    categories.filter(category => !category.deletedAt).forEach(category => map.set(category.id, []));
+    links.filter(link => !link.deletedAt).forEach(link => map.get(link.categoryId)?.push(link));
+    map.forEach((categoryLinks, categoryId) => map.set(categoryId, sortCategoryLinks(categoryLinks)));
+    return map;
+  }, [categories, links]);
 
   const handleBatchTagChange = (remove = false) => {
     if (!authToken) {
@@ -686,24 +762,6 @@ function App() {
 
   // --- Filtering & Memo ---
 
-  const pinnedLinks = useMemo(() => {
-      // Don't show pinned links if they belong to a locked category
-      const filteredPinnedLinks = links.filter(l => !l.deletedAt && l.pinned && !isCategoryLocked(l.categoryId));
-      // 按照pinnedOrder字段排序，如果没有pinnedOrder字段则按创建时间排序
-      return filteredPinnedLinks.sort((a, b) => {
-        // 如果有pinnedOrder字段，则使用pinnedOrder排序
-        if (a.pinnedOrder !== undefined && b.pinnedOrder !== undefined) {
-          return a.pinnedOrder - b.pinnedOrder;
-        }
-        // 如果只有一个有pinnedOrder字段，有pinnedOrder的排在前面
-        if (a.pinnedOrder !== undefined) return -1;
-        if (b.pinnedOrder !== undefined) return 1;
-        // 如果都没有pinnedOrder字段，则按创建时间排序
-        return a.createdAt - b.createdAt;
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [links, categories, unlockedCategoryIds]);
-
   // 拼音索引：仅在 links 变化时重算，供搜索匹配使用。
   const pinyinIndex = useMemo(() => buildPinyinIndex(links), [links]);
 
@@ -719,7 +777,7 @@ function App() {
     }
 
     // Category Filter
-    if (selectedCategory !== 'all') {
+    if (!searchQuery.trim() && selectedCategory !== 'all') {
       result = result.filter(l => l.categoryId === selectedCategory);
     }
     
@@ -732,62 +790,17 @@ function App() {
       // 改为升序排序，这样order值小(旧卡片)的排在前面，order值大(新卡片)的排在后面
       return aOrder - bOrder;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [links, selectedCategory, searchQuery, categories, unlockedCategoryIds, pinyinIndex]);
+  }, [isCategoryLocked, links, pinyinIndex, searchQuery, selectedCategory]);
 
-  // 计算其他目录的搜索结果
-  const otherCategoryResults = useMemo<Record<string, LinkItem[]>>(() => {
-    if (!searchQuery.trim() || selectedCategory === 'all') {
-      return {};
-    }
-
-    // 获取其他目录中匹配的链接
-    const otherLinks = links.filter(link => {
-      if (link.deletedAt) return false;
-      // 排除当前目录的链接
-      if (link.categoryId === selectedCategory) {
-        return false;
-      }
-      
-      // 排除锁定的目录
-      if (isCategoryLocked(link.categoryId)) {
-        return false;
-      }
-      
-      // 搜索匹配
-      return matchesLinkQuery(link, searchQuery, pinyinIndex);
-    });
-
-    // 按目录分组
-    const groupedByCategory = otherLinks.reduce((acc, link) => {
-      if (!acc[link.categoryId]) {
-        acc[link.categoryId] = [];
-      }
-      acc[link.categoryId].push(link);
-      return acc;
-    }, {} as Record<string, LinkItem[]>);
-
-    // 对每个目录内的链接进行排序
-    Object.keys(groupedByCategory).forEach(categoryId => {
-      groupedByCategory[categoryId].sort((a, b) => {
-        const aOrder = a.order !== undefined ? a.order : a.createdAt;
-        const bOrder = b.order !== undefined ? b.order : b.createdAt;
-        return aOrder - bOrder;
-      });
-    });
-
-    return groupedByCategory;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [links, selectedCategory, searchQuery, categories, unlockedCategoryIds]);
+  const activeGroupLinks = useMemo(() => activeGroupCategories.flatMap(category => isCategoryLocked(category.id) ? [] : (linksByCategory.get(category.id) || [])), [activeGroupCategories, isCategoryLocked, linksByCategory]);
 
 
   const {
     isSortingMode,
-    isSortingPinned,
-    setIsSortingPinned,
     isBatchEditMode,
     selectedLinks,
     toggleBatchEditMode,
+    closeBatchEditMode,
     toggleLinkSelection,
     handleBatchDelete,
     handleBatchMove,
@@ -795,12 +808,9 @@ function App() {
     handleAddLink,
     handleEditLink,
     handleDragEnd,
-    handlePinnedDragEnd,
     startSorting,
     saveSorting,
     cancelSorting,
-    savePinnedSorting,
-    cancelPinnedSorting,
     sensors,
     handleDeleteLink,
     togglePinFromLink,
@@ -809,7 +819,7 @@ function App() {
     categories,
     selectedCategory,
     setSelectedCategory,
-    displayedLinks,
+    displayedLinks: searchQuery.trim() ? displayedLinks : activeGroupLinks,
     authToken,
     requireAuth,
     updateData,
@@ -977,162 +987,35 @@ function App() {
         />
       )}
 
-      {/* Sidebar */}
-      <aside 
-        className={`
-          fixed lg:static inset-y-0 left-0 z-30 w-64 transform transition-transform duration-300 ease-in-out
-          bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col
-          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-        `}
-      >
-        {/* Logo */}
-        <div className="h-16 flex items-center px-6 border-b border-slate-100 dark:border-slate-700 shrink-0">
-            <span className="text-xl font-bold bg-gradient-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent">
-              {siteSettings.navTitle || 'CloudNav'}
-            </span>
-        </div>
-
-        {/* Categories List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-1 scrollbar-hide">
-            <button
-              onClick={() => { setSelectedCategory('all'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-                selectedCategory === 'all' 
-                  ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-medium' 
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'
-              }`}
-            >
-              <div className="p-1"><Icon name="LayoutGrid" size={18} /></div>
-              <span>置顶网站</span>
-            </button>
-            
-            <div className="flex items-center justify-between pt-4 pb-2 px-4">
-               <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">分类目录</span>
-               <button 
-                  onClick={() => { if(!authToken) setIsAuthOpen(true); else setIsCatManagerOpen(true); }}
-                  className="p-1 text-slate-400 hover:text-blue-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
-                  title="管理分类"
-               >
-                  <Settings size={14} />
-               </button>
-            </div>
-
-            {groupedCategories.map(group => {
-              const isCollapsed = collapsedGroupIds.has(group.id);
-              return (
-                <div key={group.id} className="space-y-1">
-                  <button
-                    onClick={() => toggleGroupCollapse(group.id)}
-                    className="w-full flex items-center gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                  >
-                    <Icon name={group.icon || 'Folder'} size={14} />
-                    <span className="truncate flex-1 text-left">{group.name}</span>
-                    <span className="text-[10px] rounded-full bg-slate-100 px-1.5 py-0.5 dark:bg-slate-700">{group.categories.length}</span>
-                    {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                  </button>
-                  {!isCollapsed && group.categories.map(cat => {
-                    const isLocked = isCategoryLocked(cat.id);
-                    return (
-                      <button
-                        key={cat.id}
-                        onClick={() => handleCategoryClick(cat)}
-                        className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all group ${
-                          selectedCategory === cat.id 
-                            ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-medium' 
-                            : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'
-                        }`}
-                      >
-                        <div className={`p-1.5 rounded-lg transition-colors flex items-center justify-center ${selectedCategory === cat.id ? 'bg-blue-100 dark:bg-blue-800' : 'bg-slate-100 dark:bg-slate-800'}`}>
-                          {isLocked ? <Lock size={16} className="text-amber-500" /> : <Icon name={cat.icon} size={16} />}
-                        </div>
-                        <span className="truncate flex-1 text-left">{cat.name}</span>
-                        {selectedCategory === cat.id && <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>}
-                      </button>
-                    );
-                  })}
-                </div>
-              );
-            })}
-        </div>
-
-        {/* Footer Actions */}
-        <div className="p-4 border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 shrink-0">
-            
-            <div className="grid grid-cols-4 gap-2 mb-2">
-                <button 
-                    onClick={() => { if(!authToken) setIsAuthOpen(true); else setIsImportModalOpen(true); }}
-                    className="flex flex-col items-center justify-center gap-1 p-2 text-xs text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-600 transition-all"
-                    title="导入书签"
-                >
-                    <Upload size={14} />
-                    <span>导入</span>
-                </button>
-                
-                <button 
-                    onClick={() => { if(!authToken) setIsAuthOpen(true); else setIsBackupModalOpen(true); }}
-                    className="flex flex-col items-center justify-center gap-1 p-2 text-xs text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-600 transition-all"
-                    title="备份与恢复"
-                >
-                    <CloudCog size={14} />
-                    <span>备份</span>
-                </button>
-
-                <button 
-                    onClick={() => { if(!authToken) setIsAuthOpen(true); else setIsTrashModalOpen(true); }}
-                    className="flex flex-col items-center justify-center gap-1 p-2 text-xs text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-600 transition-all"
-                    title="回收站"
-                >
-                    <Trash2 size={14} />
-                    <span>回收</span>
-                </button>
-
-                <button 
-                    onClick={() => { if(!authToken) setIsAuthOpen(true); else setIsSettingsModalOpen(true); }}
-                    className="flex flex-col items-center justify-center gap-1 p-2 text-xs text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-600 transition-all"
-                    title="AI 设置"
-                >
-                    <Settings size={14} />
-                    <span>设置</span>
-                </button>
-            </div>
-            
-            <div className="flex items-center justify-between text-xs px-2 mt-2">
-               <div className={`flex items-center gap-1.5 rounded-full px-2 py-1 transition-colors ${
-                 syncStatus === 'error'
-                   ? 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400'
-                   : syncStatus === 'saving'
-                     ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
-                     : authToken
-                       ? 'bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400'
-                       : 'bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400'
-               }`}>
-                 {syncStatus === 'saving' && <Loader2 className="animate-spin w-3 h-3" />}
-                 {syncStatus === 'saved' && <CheckCircle2 className="w-3 h-3" />}
-                 {syncStatus === 'error' && <AlertCircle className="w-3 h-3" />}
-                 {syncStatus !== 'saving' && syncStatus !== 'saved' && syncStatus !== 'error' && <Cloud className="w-3 h-3" />}
-                 <span>{getSyncStatusText()}</span>
-               </div>
-
-               <a 
-                 href={GITHUB_REPO_URL} 
-                 target="_blank" 
-                 rel="noopener noreferrer"
-                 className="flex items-center gap-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
-                 title="Fork this project on GitHub"
-               >
-                 <GitFork size={14} />
-                 <span>Fork 项目 v1.7.1</span>
-               </a>
-            </div>
-        </div>
-      </aside>
+      <GroupSidebar
+        groups={navigationGroups}
+        activeGroupId={activeGroup?.id || ''}
+        navTitle={siteSettings.navTitle}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        onSelect={selectGroup}
+        footer={<>
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { label: '导入', icon: 'Upload', action: () => authToken ? setIsImportModalOpen(true) : setIsAuthOpen(true) },
+              { label: '备份', icon: 'CloudCog', action: () => authToken ? setIsBackupModalOpen(true) : setIsAuthOpen(true) },
+              { label: '回收', icon: 'Trash2', action: () => authToken ? setIsTrashModalOpen(true) : setIsAuthOpen(true) },
+              { label: '设置', icon: 'Settings', action: () => authToken ? setIsSettingsModalOpen(true) : setIsAuthOpen(true) },
+            ].map(item => <button key={item.label} onClick={item.action} className="flex flex-col items-center gap-1 rounded-lg border border-slate-200 bg-white p-2 text-[11px] text-slate-600 hover:border-blue-300 hover:text-blue-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"><Icon name={item.icon} size={14} />{item.label}</button>)}
+          </div>
+          <div className="mt-3 flex items-center justify-between px-1 text-[11px] text-slate-400">
+            <span className="flex items-center gap-1">{syncStatus === 'saving' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Cloud className="h-3 w-3" />}{getSyncStatusText()}</span>
+            <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 hover:text-blue-500"><GitFork size={12} />GitHub</a>
+          </div>
+        </>}
+      />
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col h-full bg-slate-50 dark:bg-slate-900 overflow-hidden relative">
+      <main className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-slate-50 dark:bg-slate-900">
         
         {/* Header */}
-        <header className="h-16 px-4 lg:px-8 flex items-center justify-between bg-white/80 dark:bg-slate-800/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-700 sticky top-0 z-10 shrink-0">
-          <div className="flex items-center gap-4 flex-1">
+        <header className="sticky top-0 z-10 flex h-16 min-w-0 shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-white/80 px-4 backdrop-blur-md dark:border-slate-700 dark:bg-slate-800/80 lg:px-8">
+          <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-4">
             <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 -ml-2 text-slate-600 dark:text-slate-300">
               <Menu size={24} />
             </button>
@@ -1309,12 +1192,12 @@ function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1 sm:gap-2">
             {/* 视图切换控制器 - 移动端：搜索框展开时隐藏，桌面端始终显示 */}
-            <div className={`${isMobileSearchOpen ? 'hidden' : 'flex'} lg:flex items-center bg-slate-100 dark:bg-slate-700 rounded-full p-1`}>
+            <div className={`${isMobileSearchOpen ? 'hidden' : 'flex'} items-center rounded-full bg-slate-100 p-1 dark:bg-slate-700`}>
               <button
                 onClick={() => handleViewModeChange('simple')}
-                className={`px-3 py-1 text-xs font-medium rounded-full transition-all ${
+                className={`px-2 py-1 text-xs font-medium rounded-full transition-all sm:px-3 ${
                   siteSettings.cardStyle === 'simple'
                     ? 'bg-white dark:bg-slate-600 text-blue-600 dark:text-blue-400 shadow-sm'
                     : 'text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-slate-100'
@@ -1325,7 +1208,7 @@ function App() {
               </button>
               <button
                 onClick={() => handleViewModeChange('detailed')}
-                className={`px-3 py-1 text-xs font-medium rounded-full transition-all ${
+                className={`px-2 py-1 text-xs font-medium rounded-full transition-all sm:px-3 ${
                   siteSettings.cardStyle === 'detailed'
                     ? 'bg-white dark:bg-slate-600 text-blue-600 dark:text-blue-400 shadow-sm'
                     : 'text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-slate-100'
@@ -1367,316 +1250,38 @@ function App() {
         </header>
 
         {/* Content Scroll Area */}
-        <div className="flex-1 overflow-y-auto p-4 lg:p-8 space-y-8">
-            
-            {/* 1. Pinned Area (Custom Top Area) */}
-            {pinnedLinks.length > 0 && !searchQuery && (selectedCategory === 'all') && (
-                <section>
-                    <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-2">
-                            <Pin size={16} className="text-blue-500 fill-blue-500" />
-                            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                                置顶 / 常用
-                            </h2>
-                            <span className="ml-2 px-2 py-0.5 text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 rounded-full">
-                                {pinnedLinks.length}
-                            </span>
-                        </div>
-                        {isSortingPinned ? (
-                            <div className="flex gap-2">
-                                <button 
-                                    onClick={savePinnedSorting}
-                                    className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-full transition-colors"
-                                    title="保存顺序"
-                                >
-                                    <Save size={14} />
-                                    <span>保存顺序</span>
-                                </button>
-                                <button 
-                                    onClick={cancelPinnedSorting}
-                                    className="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-medium rounded-full hover:bg-slate-300 dark:hover:bg-slate-600 transition-all"
-                                    title="取消排序"
-                                >
-                                    取消
-                                </button>
-                            </div>
-                        ) : (
-                            <button 
-                                onClick={() => { if(!requireAuth()) return; setIsSortingPinned(true); }}
-                                className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-full transition-colors"
-                                title="排序"
-                            >
-                                <GripVertical size={14} />
-                                <span>排序</span>
-                            </button>
-                        )}
-                    </div>
-                    {isSortingPinned ? (
-                        <DndContext
-                            sensors={sensors}
-                            collisionDetection={closestCorners}
-                            onDragEnd={handlePinnedDragEnd}
-                        >
-                            <SortableContext
-                                items={pinnedLinks.map(link => link.id)}
-                                strategy={rectSortingStrategy}
-                            >
-                                <div className={`grid gap-3 ${
-                                  siteSettings.cardStyle === 'detailed' 
-                                    ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6' 
-                                    : 'grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8'
-                                }`}>
-                                    {pinnedLinks.map(link => React.createElement(SortableLinkCard, { key: link.id, link, siteSettings, isSortingMode, isSortingPinned }))}
-                                </div>
-                            </SortableContext>
-                        </DndContext>
-                    ) : (
-                        <div className={`grid gap-3 ${
-                          siteSettings.cardStyle === 'detailed' 
-                            ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6' 
-                            : 'grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8'
-                        }`}>
-                            {pinnedLinks.map(link => renderLinkCard(link))}
-                        </div>
-                    )}
-                </section>
-            )}
-
-            {/* 2. Main Grid */}
-            {(selectedCategory !== 'all' || searchQuery) && (
-            <section>
-                 {(!pinnedLinks.length && !searchQuery && selectedCategory === 'all') && (
-                    <div className="mb-6 p-4 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-lg flex items-center justify-between">
-                         <div>
-                            <h1 className="text-xl font-bold">早安 👋</h1>
-                            <p className="text-sm opacity-90 mt-1">
-                                {links.length} 个链接 · {categories.length} 个分类
-                            </p>
-                         </div>
-                         <Icon name="Compass" size={48} className="opacity-20" />
-                    </div>
-                 )}
-
-                 <div className="flex items-center justify-between mb-4">
-                     <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
-                         {selectedCategory === 'all' 
-                            ? (searchQuery ? '搜索结果' : '所有链接') 
-                            : (
-                                <>
-                                    {categories.find(c => c.id === selectedCategory)?.name}
-                                    {isCategoryLocked(selectedCategory) && <Lock size={14} className="text-amber-500" />}
-                                    <span className="ml-2 px-2 py-0.5 text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 rounded-full">
-                                        {displayedLinks.length}
-                                    </span>
-                                </>
-                            )
-                         }
-                     </h2>
-                     {selectedCategory !== 'all' && !isCategoryLocked(selectedCategory) && (
-                         isSortingMode === selectedCategory ? (
-                             <div className="flex gap-2">
-                                 <button 
-                                     onClick={saveSorting}
-                                     className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-full transition-colors"
-                                     title="保存顺序"
-                                 >
-                                     <Save size={14} />
-                                     <span>保存顺序</span>
-                                 </button>
-                                 <button 
-                                     onClick={cancelSorting}
-                                     className="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-medium rounded-full hover:bg-slate-300 dark:hover:bg-slate-600 transition-all"
-                                     title="取消排序"
-                                 >
-                                     取消
-                                 </button>
-                             </div>
-                         ) : (
-                             <div className="flex gap-2">
-                                 <button 
-                                     onClick={toggleBatchEditMode}
-                                     className={`flex items-center gap-1 px-3 py-1.5 text-white text-xs font-medium rounded-full transition-colors ${
-                                         isBatchEditMode 
-                                             ? 'bg-red-600 hover:bg-red-700' 
-                                             : 'bg-blue-600 hover:bg-blue-700'
-                                     }`}
-                                     title={isBatchEditMode ? "退出批量编辑" : "批量编辑"}
-                                 >
-                                     {isBatchEditMode ? '取消' : '批量编辑'}
-                                 </button>
-                                 {isBatchEditMode ? (
-                                     <>
-                                         <button 
-                                             onClick={handleBatchDelete}
-                                             className="flex items-center gap-1 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded-full transition-colors"
-                                             title="批量删除"
-                                         >
-                                             <Trash2 size={14} />
-                                             <span>批量删除</span>
-                                         </button>
-                                         <button 
-                                             onClick={handleSelectAll}
-                                             className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-full transition-colors"
-                                             title="全选/取消全选"
-                                         >
-                                             <CheckSquare size={14} />
-                                             <span>{selectedLinks.size === displayedLinks.length ? '取消全选' : '全选'}</span>
-                                         </button>
-                                         <div className="relative group">
-                                              <button 
-                                                  className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-full transition-colors"
-                                                  title="批量移动"
-                                              >
-                                                  <Upload size={14} />
-                                                  <span>批量移动</span>
-                                              </button>
-                                              <div className="absolute top-full right-0 mt-1 w-48 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 z-20 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
-                                                  {categories.filter(cat => !cat.deletedAt && cat.id !== selectedCategory).map(cat => (
-                                                      <button
-                                                          key={cat.id}
-                                                          onClick={() => handleBatchMove(cat.id)}
-                                                          className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 first:rounded-t-lg last:rounded-b-lg"
-                                                      >
-                                                          {cat.name}
-                                                      </button>
-                                                  ))}
-                                              </div>
-                                          </div>
-                                          <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1 dark:border-slate-700 dark:bg-slate-800">
-                                              <Tag size={13} className="text-slate-400" />
-                                              <input
-                                                  value={batchTagText}
-                                                  onChange={(event) => setBatchTagText(event.target.value)}
-                                                  placeholder="标签"
-                                                  className="w-24 bg-transparent text-xs outline-none dark:text-slate-200"
-                                              />
-                                              <button onClick={() => handleBatchTagChange(false)} className="text-xs text-blue-600 hover:text-blue-700">添加</button>
-                                              <button onClick={() => handleBatchTagChange(true)} className="text-xs text-red-500 hover:text-red-600">移除</button>
-                                          </div>
-                                     </>
-                                 ) : (
-                                     <button 
-                                         onClick={() => startSorting(selectedCategory)}
-                                         className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-full transition-colors"
-                                         title="排序"
-                                     >
-                                         <GripVertical size={14} />
-                                         <span>排序</span>
-                                     </button>
-                                 )}
-                             </div>
-                         )
-                     )}
-                 </div>
-
-                 {displayedLinks.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-20 text-slate-400 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl">
-                        {isCategoryLocked(selectedCategory) ? (
-                            <>
-                                <Lock size={40} className="text-amber-400 mb-4" />
-                                <p>该目录已锁定</p>
-                                <button onClick={() => setCatAuthModalData(categories.find(c => c.id === selectedCategory) || null)} className="mt-4 px-4 py-2 bg-amber-500 text-white rounded-lg">输入密码解锁</button>
-                            </>
-                        ) : searchQuery.trim() ? (
-                            <>
-                                <Search size={40} className="text-slate-300 dark:text-slate-600 mb-4" />
-                                <p className="text-slate-500 dark:text-slate-400">未找到匹配的链接</p>
-                                <p className="text-sm text-slate-400 mt-1">试试其他关键词，或清空搜索查看全部</p>
-                                <button onClick={() => setSearchInput('')} className="mt-4 px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg text-sm">清空搜索</button>
-                            </>
-                        ) : (
-                            <>
-                                <Bookmark size={40} className="text-slate-300 dark:text-slate-600 mb-4" />
-                                <p className="text-slate-500 dark:text-slate-400 font-medium">这里还没有链接</p>
-                                <p className="text-sm text-slate-400 mt-1 mb-5">开始构建你的专属导航吧</p>
-                                <div className="flex gap-3">
-                                    <button onClick={() => { setEditingLink(undefined); setIsModalOpen(true); }} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
-                                        <Plus size={16} /> 添加链接
-                                    </button>
-                                    <button onClick={() => setIsImportModalOpen(true)} className="flex items-center gap-1.5 px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg text-sm font-medium transition-colors">
-                                        <Upload size={16} /> 导入书签
-                                    </button>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                 ) : (
-                    isSortingMode === selectedCategory ? (
-                        <DndContext
-                            sensors={sensors}
-                            collisionDetection={closestCorners}
-                            onDragEnd={handleDragEnd}
-                        >
-                            <SortableContext
-                                items={displayedLinks.map(link => link.id)}
-                                strategy={rectSortingStrategy}
-                            >
-                                <div className={`grid gap-3 ${
-                                  siteSettings.cardStyle === 'detailed' 
-                                    ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6' 
-                                    : 'grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8'
-                                }`}>
-                                    {displayedLinks.map(link => React.createElement(SortableLinkCard, { key: link.id, link, siteSettings, isSortingMode, isSortingPinned }))}
-                                </div>
-                            </SortableContext>
-                        </DndContext>
-                    ) : (
-                        <div className={`grid gap-3 ${
-                          siteSettings.cardStyle === 'detailed' 
-                            ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6' 
-                            : 'grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8'
-                        }`}>
-                            {displayedLinks.map(link => renderLinkCard(link))}
-                        </div>
-                    )
-                 )}
+        <div ref={contentScrollRef} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-slate-50 px-4 pb-8 dark:bg-slate-900 sm:px-6 lg:px-8">
+          {searchQuery.trim() ? (
+            <section className="mx-auto max-w-[1800px]">
+              <div className="mb-5 flex items-end justify-between gap-4">
+                <div><p className="text-xs font-semibold uppercase tracking-wider text-blue-500">全站搜索</p><h1 className="mt-1 text-2xl font-bold text-slate-900 dark:text-white">“{searchQuery}” 的搜索结果</h1><p className="mt-1 text-sm text-slate-500">找到 {displayedLinks.length} 个可访问链接</p></div>
+                <button onClick={() => setSearchInput('')} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">清空搜索</button>
+              </div>
+              {displayedLinks.length === 0 ? <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white py-20 text-slate-400 dark:border-slate-700 dark:bg-slate-800"><Search size={36} /><p className="mt-3">未找到匹配的链接</p></div> : <div className={`grid gap-3 ${siteSettings.cardStyle === 'detailed' ? 'grid-cols-1 xs:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5' : 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5'}`}>{displayedLinks.map(link => <div key={link.id} className="min-w-0"><div className="mb-1 flex items-center gap-1 px-1 text-[10px] text-slate-400"><span>{navigationGroups.find(group => group.categories.some(category => category.id === link.categoryId))?.name}</span><span>/</span><span>{categories.find(category => category.id === link.categoryId)?.name}</span></div>{renderLinkCard(link)}</div>)}</div>}
             </section>
-            )}
-
-            {/* 其他目录搜索结果区域 */}
-            {searchQuery.trim() && selectedCategory !== 'all' && (
-              <section className="mt-8 pt-8 border-t-2 border-slate-200 dark:border-slate-700">
-                <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2 mb-4">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-folder-search">
-                    <circle cx="11" cy="11" r="8"></circle>
-                    <path d="m21 21-4.35-4.35"></path>
-                    <path d="M11 11h.01"></path>
-                  </svg>
-                  其他目录搜索结果
-                  <span className="ml-2 px-2 py-0.5 text-xs font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-300 rounded-full">
-                    {Object.values(otherCategoryResults).flat().length}
-                  </span>
-                </h2>
-
-                {Object.keys(otherCategoryResults).length > 0 ? (
-                  (Object.entries(otherCategoryResults) as [string, LinkItem[]][]).map(([categoryId, categoryLinks]) => {
-                    const category = categories.find(c => c.id === categoryId);
-                    if (!category) return null;
-
-                    return (
-                      <div key={categoryId} className="mb-6 last:mb-0">
-                        <div className="flex items-center gap-2 mb-3">
-                          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-                            {category.name}
-                          </h3>
-                          <span className="px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400 rounded-full">
-                            {categoryLinks.length}
-                          </span>
-                        </div>
-
-                        <div className={`grid gap-3 ${
-                          siteSettings.cardStyle === 'detailed' 
-                            ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6' 
-                            : 'grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8'
-                        }`}>
-                          {categoryLinks.map(link => renderLinkCard(link))}
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : null}
+          ) : activeGroup ? (
+            <div className="mx-auto max-w-[1800px]">
+              <section className="sticky top-0 z-[5] -mx-4 mb-6 border-b border-slate-200 bg-slate-50/95 px-4 pb-3 pt-5 shadow-[0_8px_18px_-18px_rgba(15,23,42,0.6)] backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+                <div className="flex min-w-0 flex-wrap items-end justify-between gap-3">
+                  <div><p className="text-xs font-semibold uppercase tracking-wider text-blue-500">当前分组</p><h1 className="mt-1 flex items-center gap-2 text-2xl font-bold text-slate-900 dark:text-white"><Icon name={activeGroup.icon || 'Folder'} size={24} />{activeGroup.name}</h1><p className="mt-1 text-sm text-slate-500">{activeGroup.categoryCount} 个分类 · {activeGroup.linkCount} 个可访问链接</p></div>
+                  <div className="flex max-w-full items-center gap-2"><button onClick={() => { if (!managementMode && !requireAuth()) return; if (managementMode) closeBatchEditMode(); setManagementMode(previous => !previous); }} className={`rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${managementMode ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200'}`}><Settings size={15} className="mr-1 inline" />{managementMode ? '退出管理' : '管理模式'}</button>{managementMode && <button onClick={() => setIsCatManagerOpen(true)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">管理分类</button>}</div>
+                </div>
+                <div className="scrollbar-hide mt-4 flex gap-1 overflow-x-auto border-t border-slate-200 pt-2 dark:border-slate-800">{activeGroupCategories.map(category => <button key={category.id} onClick={() => scrollToCategory(category.id)} className={`relative shrink-0 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${activeAnchorId === category.id ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300' : 'text-slate-500 hover:bg-white hover:text-blue-600 dark:text-slate-400 dark:hover:bg-slate-800'}`}><Icon name={category.icon || 'Folder'} size={13} className="mr-1.5 inline" />{category.name}{activeAnchorId === category.id && <span className="absolute inset-x-3 -bottom-0.5 h-0.5 rounded-full bg-blue-600" />}</button>)}</div>
+                {managementMode && <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/80 p-3 dark:border-blue-900/50 dark:bg-blue-950/30">
+                  <button onClick={toggleBatchEditMode} className={`rounded-lg px-3 py-2 text-xs font-semibold ${isBatchEditMode ? 'bg-red-600 text-white' : 'bg-blue-600 text-white'}`}>{isBatchEditMode ? '退出批量选择' : '批量选择'}</button>
+                  {isBatchEditMode && <>
+                    <button onClick={handleSelectAll} className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-200">全选当前分组</button>
+                    <select onChange={event => { if (event.target.value) handleBatchMove(event.target.value); event.target.value = ''; }} defaultValue="" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"><option value="" disabled>移动到分类</option>{categories.filter(category => !category.deletedAt).map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select>
+                    <input value={batchTagText} onChange={event => setBatchTagText(event.target.value)} placeholder="标签，逗号分隔" className="min-w-36 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-blue-400 dark:border-slate-700 dark:bg-slate-800" />
+                    <button onClick={() => handleBatchTagChange(false)} className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-200">添加标签</button>
+                    <button onClick={() => handleBatchTagChange(true)} className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-200">移除标签</button>
+                    <button onClick={handleBatchDelete} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white">删除所选（{selectedLinks.size}）</button>
+                  </>}
+                </div>}
               </section>
-            )}
+              <div className="space-y-5">{activeGroupCategories.map(category => React.createElement(CategorySection, { key: category.id, category, links: linksByCategory.get(category.id) || [], locked: isCategoryLocked(category.id), collapsed: collapsedCategoryIds.has(category.id), expanded: expandedCategoryIds.has(category.id), managementMode, sorting: isSortingMode === category.id, siteSettings, sensors, renderLink: renderLinkCard, onUnlock: () => setCatAuthModalData(category), onToggleCollapse: () => toggleCategorySet(setCollapsedCategoryIds, category.id), onToggleExpanded: () => toggleCategorySet(setExpandedCategoryIds, category.id), onAdd: () => { setSelectedCategory(category.id); setEditingLink(undefined); setPrefillLink({ categoryId: category.id }); setIsModalOpen(true); }, onStartSorting: () => { setSelectedCategory(category.id); startSorting(category.id); }, onSaveSorting: saveSorting, onCancelSorting: cancelSorting, onDragEnd: handleDragEnd }))}</div>
+            </div>
+          ) : <div className="flex h-full items-center justify-center text-slate-400">暂无可用分组</div>}
         </div>
       </main>
 
