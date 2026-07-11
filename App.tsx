@@ -129,6 +129,7 @@ function App() {
   const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Set<string>>(new Set());
   const [expandedCategoryIds, setExpandedCategoryIds] = useState<Set<string>>(new Set());
   const contentScrollRef = useRef<HTMLDivElement>(null);
+  const groupHeaderRef = useRef<HTMLElement>(null);
   const browsingScrollTopRef = useRef(0);
   const wasSearchingRef = useRef(false);
   const [searchInput, setSearchInput] = useState('');
@@ -736,7 +737,14 @@ function App() {
 
   const scrollToCategory = (categoryId: string) => {
     setActiveAnchorId(categoryId);
-    document.getElementById(`category-${categoryId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const scrollContainer = contentScrollRef.current;
+    const target = document.getElementById(`category-${categoryId}`);
+    if (!scrollContainer || !target) return;
+    const containerTop = scrollContainer.getBoundingClientRect().top;
+    const targetTop = target.getBoundingClientRect().top;
+    const stickyHeaderHeight = groupHeaderRef.current?.getBoundingClientRect().height || 0;
+    const top = scrollContainer.scrollTop + targetTop - containerTop - stickyHeaderHeight - 16;
+    scrollContainer.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
   };
 
   useEffect(() => {
@@ -1339,7 +1347,7 @@ function App() {
             </section>
           ) : activeGroup ? (
             <div className="mx-auto max-w-[1800px]">
-              <section className="sticky top-0 z-[5] -mx-4 mb-6 border-b border-slate-200 bg-slate-50/95 px-4 pb-3 pt-5 shadow-[0_8px_18px_-18px_rgba(15,23,42,0.6)] backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+              <section ref={groupHeaderRef} className="sticky top-0 z-[5] -mx-4 mb-6 border-b border-slate-200 bg-slate-50/95 px-4 pb-3 pt-5 shadow-[0_8px_18px_-18px_rgba(15,23,42,0.6)] backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
                 <div className="flex min-w-0 flex-wrap items-end justify-between gap-3">
                   <div><p className="text-xs font-semibold uppercase tracking-wider text-blue-500">当前分组</p><h1 className="mt-1 flex items-center gap-2 text-2xl font-bold text-slate-900 dark:text-white"><Icon name={activeGroup.icon || 'Folder'} size={24} />{activeGroup.name}</h1><p className="mt-1 text-sm text-slate-500">{activeGroup.categoryCount} 个分类 · {activeGroup.linkCount} 个可访问链接</p></div>
                   <div className="flex max-w-full items-center gap-2"><button onClick={() => { if (!managementMode && !requireAuth()) return; if (managementMode) closeBatchEditMode(); setManagementMode(previous => !previous); }} className={`rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${managementMode ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200'}`}><Settings size={15} className="mr-1 inline" />{managementMode ? '退出管理' : '管理模式'}</button>{managementMode && <button onClick={() => setIsCatManagerOpen(true)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">管理分类</button>}</div>

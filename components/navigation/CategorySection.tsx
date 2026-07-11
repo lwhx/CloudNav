@@ -35,7 +35,7 @@ const CategorySection = ({ category, links, locked, collapsed, expanded, managem
     : 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4 min-[1680px]:grid-cols-5';
 
   return (
-    <section id={`category-${category.id}`} data-category-section={category.id} className="min-w-0 max-w-full scroll-mt-36 border-b border-slate-200 pb-6 last:border-b-0 dark:border-slate-800">
+    <section id={`category-${category.id}`} data-category-section={category.id} className="min-w-0 max-w-full border-b border-slate-200 pb-6 last:border-b-0 dark:border-slate-800">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <button onClick={onToggleCollapse} className="flex min-w-0 items-center gap-3 text-left">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300"><Icon name={category.icon || 'Folder'} size={18} /></span>
