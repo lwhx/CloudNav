@@ -803,7 +803,7 @@ function App() {
   const activeGroupLinks = useMemo(() => activeGroupCategories.flatMap(category => isCategoryLocked(category.id) ? [] : (linksByCategory.get(category.id) || [])), [activeGroupCategories, isCategoryLocked, linksByCategory]);
 
   // 计算其他目录的搜索结果
-  const otherCategoryResults = useMemo<Record<string, LinkItem[]>>(() => {
+  const _otherCategoryResults = useMemo<Record<string, LinkItem[]>>(() => {
     if (!searchQuery.trim() || selectedCategory === 'all') {
       return {};
     }

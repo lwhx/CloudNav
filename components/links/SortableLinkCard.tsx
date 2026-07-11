@@ -54,7 +54,6 @@ const SortableLinkCard = ({ link, siteSettings, isSortingMode, isSortingPinned }
           }`}>
             {link.icon ? <img src={link.icon} alt="" className="w-5 h-5"/> : link.title.charAt(0)}
           </div>
-<<<<<<< HEAD
           <h3 className={`min-w-0 flex-1 text-slate-900 dark:text-slate-100 truncate overflow-hidden text-ellipsis ${
             isDetailedView ? 'text-base' : 'text-sm font-medium text-slate-800 dark:text-slate-200'
           }`} title={link.title}>
