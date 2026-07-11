@@ -9,6 +9,7 @@ export interface LinkItem {
   createdAt: number;
   pinned?: boolean; // New field for pinning
   pinnedOrder?: number; // Field for pinned link sorting order
+  important?: boolean; // 重点标记：列表内优先展示并高亮
   order?: number;
   updatedAt?: number; // Last-modified timestamp; used by cloud/local merge to resolve per-record conflicts
   deletedAt?: number;

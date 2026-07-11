@@ -19,6 +19,7 @@ interface UseContextMenuOptions {
   onEditLink: (link: LinkItem) => void;
   onDeleteLink: (linkId: string) => void;
   onTogglePin: (link: LinkItem) => void;
+  onToggleImportant: (link: LinkItem) => void;
 }
 
 const INITIAL_CONTEXT_MENU: ContextMenuState = {
@@ -34,7 +35,7 @@ const INITIAL_QR_CODE_MODAL: QRCodeModalState = {
 };
 
 export const useContextMenu = (options: UseContextMenuOptions) => {
-  const { isBatchEditMode, requireAuth, onEditLink, onDeleteLink, onTogglePin } = options;
+  const { isBatchEditMode, requireAuth, onEditLink, onDeleteLink, onTogglePin, onToggleImportant } = options;
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(INITIAL_CONTEXT_MENU);
   const [qrCodeModal, setQrCodeModal] = useState<QRCodeModalState>(INITIAL_QR_CODE_MODAL);
@@ -99,6 +100,13 @@ export const useContextMenu = (options: UseContextMenuOptions) => {
     closeContextMenu();
   }, [contextMenu.link, requireAuth, onTogglePin, closeContextMenu]);
 
+  const toggleImportantFromContextMenu = useCallback(() => {
+    if (!contextMenu.link) return;
+    if (!requireAuth()) return;
+    onToggleImportant(contextMenu.link);
+    closeContextMenu();
+  }, [contextMenu.link, requireAuth, onToggleImportant, closeContextMenu]);
+
   const closeQrCodeModal = useCallback(() => {
     setQrCodeModal(INITIAL_QR_CODE_MODAL);
   }, []);
@@ -113,6 +121,7 @@ export const useContextMenu = (options: UseContextMenuOptions) => {
     editLinkFromContextMenu,
     deleteLinkFromContextMenu,
     togglePinFromContextMenu,
+    toggleImportantFromContextMenu,
     closeQrCodeModal,
   };
 };

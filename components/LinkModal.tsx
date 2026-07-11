@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useModalA11y } from '../hooks/useModalA11y';
-import { X, Sparkles, Loader2, Pin, Wand2, Trash2 } from 'lucide-react';
+import { X, Sparkles, Loader2, Pin, Wand2, Trash2, Star } from 'lucide-react';
 import { LinkItem, Category, AIConfig } from '../types';
 import { normalizeTags } from '../services/appDataPersistence';
 import { getActiveAIProvider } from '../services/aiConfigService';
@@ -28,6 +28,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
   const [description, setDescription] = useState('');
   const [categoryId, setCategoryId] = useState(categories[0]?.id || 'common');
   const [pinned, setPinned] = useState(false);
+  const [important, setImportant] = useState(false);
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [icon, setIcon] = useState('');
@@ -70,6 +71,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
         setDescription(initialData.description || '');
         setCategoryId(initialData.categoryId || defaultCategoryId || categories[0]?.id || 'common');
         setPinned(initialData.pinned || false);
+        setImportant(initialData.important || false);
         setTags(normalizeTags(initialData.tags));
         setTagInput('');
         setIcon(initialData.icon || '');
@@ -81,6 +83,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
         const defaultCategory = defaultCategoryId && categories.find(cat => cat.id === defaultCategoryId);
         setCategoryId(defaultCategory ? defaultCategoryId : (categories[0]?.id || 'common'));
         setPinned(false);
+        setImportant(false);
         setTags([]);
         setTagInput('');
         setIcon('');
@@ -206,6 +209,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
       description,
       categoryId,
       pinned,
+      important,
       tags: normalizeTags([...tags, ...parseTagInput(tagInput)])
     });
     
@@ -222,6 +226,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
       setIcon('');
       setDescription('');
       setPinned(false);
+      setImportant(false);
       setTags([]);
       setTagInput('');
     } else {
@@ -402,6 +407,20 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
             >
               <Pin size={14} className={pinned ? "fill-current" : ""} />
               <span className="text-xs font-medium">置顶</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setImportant(!important)}
+              className={`flex items-center gap-1 px-2 py-1 rounded-md border transition-all ${
+                important
+                ? 'bg-amber-100 border-amber-200 text-amber-700 dark:bg-amber-900/40 dark:border-amber-700 dark:text-amber-200'
+                : 'bg-slate-50 border-slate-200 text-slate-500 dark:bg-slate-700 dark:border-slate-600 dark:text-slate-400'
+              }`}
+              title={important ? "取消重点" : "标记重点"}
+              aria-pressed={important}
+            >
+              <Star size={14} className={important ? "fill-current" : ""} />
+              <span className="text-xs font-medium">重点</span>
             </button>
             {!isEditing && (
               <div className="flex items-center gap-1 px-2 py-1 rounded-md border bg-slate-50 border-slate-200 dark:bg-slate-700 dark:border-slate-600">

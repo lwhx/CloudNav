@@ -1,6 +1,6 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Pin } from 'lucide-react';
+import { Pin, Star } from 'lucide-react';
 import { LinkItem, SiteSettings } from '../../types';
 
 interface SortableLinkCardProps {
@@ -21,6 +21,7 @@ const SortableLinkCard = ({ link, siteSettings, isSortingMode, isSortingPinned }
   } = useSortable({ id: link.id });
 
   const isDetailedView = siteSettings.cardStyle === 'detailed';
+  const isImportant = Boolean(link.important);
   const style = {
     transform: CSS.Transform.toString(transform),
     transition: isDragging ? 'none' : transition,
@@ -35,6 +36,8 @@ const SortableLinkCard = ({ link, siteSettings, isSortingMode, isSortingPinned }
       className={`group relative transition-all duration-200 cursor-grab active:cursor-grabbing min-w-0 max-w-full overflow-hidden hover:shadow-lg hover:shadow-green-100/50 dark:hover:shadow-green-900/20 ${
         isSortingMode || isSortingPinned
           ? 'bg-green-20 dark:bg-green-900/30 border-green-200 dark:border-green-800'
+          : isImportant
+            ? 'bg-amber-50 border-amber-200 shadow-amber-100/60 dark:bg-amber-950/30 dark:border-amber-700/60 dark:shadow-amber-950/30'
           : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
       } ${isDragging ? 'shadow-2xl scale-105' : ''} ${
         isDetailedView
@@ -51,12 +54,19 @@ const SortableLinkCard = ({ link, siteSettings, isSortingMode, isSortingPinned }
           }`}>
             {link.icon ? <img src={link.icon} alt="" className="w-5 h-5"/> : link.title.charAt(0)}
           </div>
+<<<<<<< HEAD
           <h3 className={`min-w-0 flex-1 text-slate-900 dark:text-slate-100 truncate overflow-hidden text-ellipsis ${
             isDetailedView ? 'text-base' : 'text-sm font-medium text-slate-800 dark:text-slate-200'
           }`} title={link.title}>
             {link.title}
           </h3>
           {link.pinned && <Pin size={12} fill="currentColor" className="shrink-0 text-amber-500" aria-label="置顶链接" />}
+          {isImportant && (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-400/15 dark:text-amber-200">
+              <Star size={11} className="fill-current" />
+              重点
+            </span>
+          )}
         </div>
         {isDetailedView && link.description && (
           <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed line-clamp-2">

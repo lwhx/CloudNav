@@ -106,6 +106,14 @@ const mergeTags = (currentTags: string[] | undefined, rawTags: string, remove = 
   return normalizeTags([...(currentTags || []), ...parsedTags]);
 };
 
+const compareLinksByImportanceAndOrder = (a: LinkItem, b: LinkItem) => {
+  if (a.important && !b.important) return -1;
+  if (!a.important && b.important) return 1;
+  const aOrder = a.order !== undefined ? a.order : a.createdAt;
+  const bOrder = b.order !== undefined ? b.order : b.createdAt;
+  return aOrder - bOrder;
+};
+
 
 function App() {
   const { darkMode, themeTransition, themeButtonRef, toggleTheme } = useTheme();
@@ -794,6 +802,47 @@ function App() {
 
   const activeGroupLinks = useMemo(() => activeGroupCategories.flatMap(category => isCategoryLocked(category.id) ? [] : (linksByCategory.get(category.id) || [])), [activeGroupCategories, isCategoryLocked, linksByCategory]);
 
+  // 计算其他目录的搜索结果
+  const otherCategoryResults = useMemo<Record<string, LinkItem[]>>(() => {
+    if (!searchQuery.trim() || selectedCategory === 'all') {
+      return {};
+    }
+
+    // 获取其他目录中匹配的链接
+    const otherLinks = links.filter(link => {
+      if (link.deletedAt) return false;
+      // 排除当前目录的链接
+      if (link.categoryId === selectedCategory) {
+        return false;
+      }
+      
+      // 排除锁定的目录
+      if (isCategoryLocked(link.categoryId)) {
+        return false;
+      }
+      
+      // 搜索匹配
+      return matchesLinkQuery(link, searchQuery, pinyinIndex);
+    });
+
+    // 按目录分组
+    const groupedByCategory = otherLinks.reduce((acc, link) => {
+      if (!acc[link.categoryId]) {
+        acc[link.categoryId] = [];
+      }
+      acc[link.categoryId].push(link);
+      return acc;
+    }, {} as Record<string, LinkItem[]>);
+
+    // 对每个目录内的链接进行排序
+    Object.keys(groupedByCategory).forEach(categoryId => {
+      groupedByCategory[categoryId].sort(compareLinksByImportanceAndOrder);
+    });
+
+    return groupedByCategory;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [links, selectedCategory, searchQuery, categories, isCategoryLocked, pinyinIndex]);
+
 
   const {
     isSortingMode,
@@ -814,6 +863,7 @@ function App() {
     sensors,
     handleDeleteLink,
     togglePinFromLink,
+    toggleImportantFromLink,
   } = useLinkOrganizer({
     links,
     categories,
@@ -836,12 +886,14 @@ function App() {
     handleContextMenu, closeContextMenu, copyLinkToClipboard,
     showQRCode, editLinkFromContextMenu, deleteLinkFromContextMenu,
     togglePinFromContextMenu, closeQrCodeModal,
+    toggleImportantFromContextMenu,
   } = useContextMenu({
     isBatchEditMode,
     requireAuth,
     onEditLink: (link) => { setEditingLink(link); setIsModalOpen(true); },
     onDeleteLink: (linkId) => { const now = Date.now(); const newLinks = links.map(l => l.id === linkId ? { ...l, deletedAt: now, deletedFromCategoryId: l.categoryId, pinned: false } : l); updateData(newLinks, categories, categoryGroups); },
     onTogglePin: togglePinFromLink,
+    onToggleImportant: toggleImportantFromLink,
   });
 
 
@@ -856,6 +908,12 @@ function App() {
       siteSettings={siteSettings}
       onToggleSelection={toggleLinkSelection}
       onContextMenu={handleContextMenu}
+      onToggleImportant={(targetLink, event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!requireAuth()) return;
+        toggleImportantFromLink(targetLink);
+      }}
       onEdit={(targetLink, event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -1308,6 +1366,7 @@ function App() {
             onEditLink={editLinkFromContextMenu}
             onDeleteLink={deleteLinkFromContextMenu}
             onTogglePin={togglePinFromContextMenu}
+            onToggleImportant={toggleImportantFromContextMenu}
           />
 
           {/* 二维码模态框 */}
