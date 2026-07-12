@@ -1352,7 +1352,33 @@ function App() {
                   <div><p className="text-xs font-semibold uppercase tracking-wider text-blue-500">当前分组</p><h1 className="mt-1 flex items-center gap-2 text-2xl font-bold text-slate-900 dark:text-white"><Icon name={activeGroup.icon || 'Folder'} size={24} />{activeGroup.name}</h1><p className="mt-1 text-sm text-slate-500">{activeGroup.categoryCount} 个分类 · {activeGroup.linkCount} 个可访问链接</p></div>
                   <div className="flex max-w-full items-center gap-2"><button onClick={() => { if (!managementMode && !requireAuth()) return; if (managementMode) closeBatchEditMode(); setManagementMode(previous => !previous); }} className={`rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${managementMode ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200'}`}><Settings size={15} className="mr-1 inline" />{managementMode ? '退出管理' : '管理模式'}</button>{managementMode && <button onClick={() => setIsCatManagerOpen(true)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">管理分类</button>}</div>
                 </div>
-                <div className="scrollbar-hide mt-4 flex gap-1 overflow-x-auto border-t border-slate-200 pt-2 dark:border-slate-800">{activeGroupCategories.map(category => <button key={category.id} onClick={() => scrollToCategory(category.id)} className={`relative shrink-0 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${activeAnchorId === category.id ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300' : 'text-slate-500 hover:bg-white hover:text-blue-600 dark:text-slate-400 dark:hover:bg-slate-800'}`}><Icon name={category.icon || 'Folder'} size={13} className="mr-1.5 inline" />{category.name}{activeAnchorId === category.id && <span className="absolute inset-x-3 -bottom-0.5 h-0.5 rounded-full bg-blue-600" />}</button>)}</div>
+                <div className="mt-4 flex min-w-0 items-center gap-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+                  <div className="flex shrink-0 items-center gap-1.5 text-sm font-bold text-slate-700 dark:text-slate-200">
+                    <Icon name={activeGroup.icon || 'Folder'} size={16} />
+                    <span className="hidden sm:inline">{activeGroup.name}</span>
+                  </div>
+                  <div className="scrollbar-hide flex min-w-0 flex-1 items-center gap-1 overflow-x-auto rounded-lg bg-slate-200 p-1 dark:bg-slate-800">
+                    {activeGroupCategories.map(category => {
+                      const active = activeAnchorId === category.id;
+                      const locked = isCategoryLocked(category.id);
+                      return (
+                        <button
+                          key={category.id}
+                          onClick={() => scrollToCategory(category.id)}
+                          className={`flex h-8 shrink-0 items-center gap-1.5 rounded-md px-3 text-xs font-semibold transition-colors ${
+                            active
+                              ? 'bg-red-500 text-white shadow-sm hover:bg-red-500'
+                              : 'text-slate-500 hover:bg-white hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white'
+                          }`}
+                          aria-current={active ? 'true' : undefined}
+                        >
+                          <span>{category.name}</span>
+                          {locked && <Icon name="Lock" size={12} className={active ? 'text-white/85' : 'text-slate-400'} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
                 {managementMode && <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/80 p-3 dark:border-blue-900/50 dark:bg-blue-950/30">
                   <button onClick={toggleBatchEditMode} className={`rounded-lg px-3 py-2 text-xs font-semibold ${isBatchEditMode ? 'bg-red-600 text-white' : 'bg-blue-600 text-white'}`}>{isBatchEditMode ? '退出批量选择' : '批量选择'}</button>
                   {isBatchEditMode && <>
